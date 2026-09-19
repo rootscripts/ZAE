@@ -1,4 +1,4 @@
-cat << 'EOF' > ~/.local/bin/zae
+
 #!/usr/bin/env python3
 import sys, os, time, subprocess, json, urllib.request, urllib.error, re, ssl
 from PyQt6.QtWidgets import QApplication, QPlainTextEdit

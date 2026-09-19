@@ -34,14 +34,20 @@ _TC = "#b0b0b0"
 _UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36 ZAE/3.0"
 
 _FM = [
-    "qwen/qwen3.8-27b",
-    "openai/gpt-oss-20b",
-    "openai/gpt-oss-120b",
     "llama-3.3-70b-versatile",
     "llama-3.1-8b-instant",
     "gemma2-9b-it",
     "mixtral-8x7b-32768",
+    # reasoning models below: they burn a hidden "thinking" token budget on
+    # every single call before producing any visible content, which eats
+    # through the account's rate limit fast for zero benefit in a terminal
+    # emulator - keep them as a last-resort fallback only, never first.
+    "qwen/qwen3.8-27b",
+    "openai/gpt-oss-20b",
+    "openai/gpt-oss-120b",
 ]
+
+_REASON_MODELS = ("gpt-oss", "qwen3")
 
 _SKIP = ("whisper", "guard", "embed", "vision", "tool", "tts", "image",
          "compound", "orpheus", "safeguard", "allam")
@@ -111,12 +117,12 @@ def _gf(sz=12):
 _BOOT = r"""<<clear:zae_term>>
 <<color:#ff1744>>███████╗ <<color:#ff9100>>█████╗  <<color:#ffea00>>███████╗
 <<color:#ff007f>>╚══███╔╝<<color:#ffab00>>██╔══██╗<<color:#ffff00>>██╔════╝
-<<color:#d500f9>>  ███╔╝ <<color:#00e676>>███████║<<color:#00e5ff>>█████╗  
-<<color:#aa00ff>> ███╔╝  <<color:#00c853>>██╔══██║<<color:#00b0ff>>██╔══╝  
+<<color:#d500f9>>  ███╔╝ <<color:#00e676>>███████║<<color:#00e5ff>>█████╗
+<<color:#aa00ff>> ███╔╝  <<color:#00c853>>██╔══██║<<color:#00b0ff>>██╔══╝
 <<color:#651fff>>███████╗<<color:#1de9b6>>██║  ██║<<color:#2979ff>>███████╗
 <<color:#3d5afe>>╚══════╝<<color:#00bfa5>>╚═╝  ╚═╝<<color:#304ffe>>╚══════╝<<color:reset>>
 
-<<color:#ff007f>>:3<<color:reset>> <<color:#6272a4>>a virtual machine that can run any OS. Powered by Groq. github: @rootlesszen<<color:reset>>
+<<color:#ff007f>>:3<<color:reset>> <<color:#6272a4>>a virtual machine that can run any OS. v3. Powered by Groq. github: @rootlesszen<<color:reset>>
 <<timeout:0.18>>
 BIOS Version 4.10-ZAE (CP437 IBM VGA text mode)
 Memory Test: 16384KB OK<<timeout:0.10>>
@@ -255,10 +261,11 @@ class _W_Thread(QThread):
         lec = None
         ml = self._ml
         order = ml[_mi:] + ml[:_mi]
-        for mdl in order:
+        order = order[:3]  # cap attempts per command so one bad command can't chew through the whole quota
+        for attempt, mdl in enumerate(order):
             if self._stop: return
-            is_reason = "gpt-oss" in mdl
-            maxt = 2048 if is_reason else 800
+            is_reason = any(r in mdl for r in _REASON_MODELS)
+            maxt = 700 if is_reason else 800
             pl = {
                 "model": mdl,
                 "messages": self._msgs,
@@ -267,6 +274,12 @@ class _W_Thread(QThread):
                 "stream": True,
                 "top_p": 0.9,
             }
+            if is_reason:
+                # reasoning models silently spend a big hidden "thinking" token
+                # budget before any visible output - force it down and drop it
+                # entirely, we only want the final terminal-style answer
+                pl["reasoning_effort"] = "low"
+                pl["include_reasoning"] = False
             try:
                 self.mused.emit(mdl)
                 rq = urllib.request.Request(
@@ -339,6 +352,8 @@ class _W_Thread(QThread):
                         if mx: wt = mx.group(1).rstrip('.')
                     except Exception:
                         pass
+                if e.code == 429:
+                    break  # account-wide limit almost certainly - trying other models just burns more of it
                 time.sleep(0.3)
                 continue
             except Exception:

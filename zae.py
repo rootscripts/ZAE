@@ -29,11 +29,17 @@ _TC = "#b0b0b0"
 _UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36 ZAE/3.0"
 
 _FM = [
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+    "qwen/qwen3.8-27b",
     "llama-3.3-70b-versatile",
     "llama-3.1-8b-instant",
     "gemma2-9b-it",
     "mixtral-8x7b-32768",
 ]
+
+_SKIP = ("whisper", "guard", "embed", "vision", "tool", "tts", "image",
+         "compound", "orpheus", "safeguard", "allam")
 
 def _lk():
     e = os.environ.get("GROQ_API_KEY", "").strip()
@@ -52,7 +58,7 @@ def _gm(k):
         with urllib.request.urlopen(r, timeout=4) as resp:
             d = json.loads(resp.read().decode())
             live = [m["id"] for m in d.get("data", [])
-                    if not any(x in m["id"] for x in ("whisper", "guard", "embed", "vision", "tool", "tts", "image"))]
+                    if not any(x in m["id"] for x in _SKIP)]
             if live:
                 p = [m for m in _FM if m in live] + [m for m in live if m not in _FM]
                 return p

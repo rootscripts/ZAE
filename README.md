@@ -25,7 +25,7 @@ Not a real shell. No actual commands are executed on your machine.
 
 ## Install
 
-### Linux
+### Linux (native)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/rootscripts/ZAE/main/install.sh | bash
@@ -39,7 +39,7 @@ After install, restart your shell (or run `export PATH="$HOME/.local/bin:$PATH"`
 zae
 ```
 
-### Windows
+### Windows (unstable!!)
 
 Open Command Prompt (cmd) as admin and run:
 

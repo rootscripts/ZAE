@@ -16,7 +16,7 @@ A lightweight client-side state tracker watches your inputs (`cat << EOF`, `host
 
 ## Installation
 
-### Linux
+### Linux (native)
 
 Run the installer script:
 
@@ -25,7 +25,7 @@ curl -sSL https://raw.githubusercontent.com/rootscripts/ZAE/main/install.sh -o i
 ```
 The installer places the executable in ~/.local/bin/zae and ensures it is in your $PATH.
 
-### Windows
+### Windows (PORT, UNSTABLE)
 
 Ensure Python 3.10+ is installed and added to PATH.
 

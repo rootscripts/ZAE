@@ -1,3 +1,4 @@
+cat << 'EOF' > ~/.local/bin/zae
 #!/usr/bin/env python3
 import sys, os, time, subprocess, json, urllib.request, urllib.error, re, ssl
 from PyQt6.QtWidgets import QApplication, QPlainTextEdit
@@ -194,12 +195,14 @@ class Worker(QThread):
         self.k = k
         self.msgs = msgs
         self.cancelled = False
-        self.models = get_m(k)
 
     def cancel(self):
         self.cancelled = True
 
     def run(self):
+        # Поиск моделей перенесен СУДА (в фоновый поток), чтобы GUI не зависал
+        self.models = get_m(self.k)
+        
         w_time = "a few seconds"
         err_code = None
         err_detail = ""
@@ -474,54 +477,62 @@ class Term(QPlainTextEdit):
         if not cmd:
             self.new_prompt()
             return
+
+        try:
+            if cmd == ">zae show":
+                d_txt = f"zae: model: {self.last_m}\nresponse:\n{self.last_resp}\n"
+                self.write_txt(d_txt, "#ffff55")
+                self.new_prompt()
+                return
+                
+            self.state.parse_cmd(cmd)
+            p_cwd = "~" if self.state.cwd == "/root" else self.state.cwd
+            self.prompt = f"{self.state.user}@{self.state.hostname} {p_cwd} # "
+
+            if cmd == "clear":
+                self.clear(); self.new_prompt(); return
+            elif cmd in ("exit", "poweroff", "shutdown now"):
+                self.close(); return
+            elif cmd == "reboot":
+                self.clear(); self.on_chunk(BOOT); self.new_prompt(); return
+
+            if not self.k:
+                if cmd.startswith("gsk_"):
+                    with open(K_FILE, "w") as f: f.write(cmd)
+                    self.k = cmd
+                    self.write_txt("groq api key saved successfully\n", "#55ff55")
+                else:
+                    self.write_txt("enter your groq api key (gsk_...):\n", "#ffff55")
+                self.new_prompt()
+                return
+
+            self.is_busy = True; self.setReadOnly(True)
+            self.msgs.append({"role": "user", "content": cmd})
             
-        if cmd == ">zae show":
-            d_txt = f"zae: model: {self.last_m}\nresponse:\n{self.last_resp}\n"
-            self.write_txt(d_txt, "#ffff55")
-            self.new_prompt()
-            return
+            sys_cnt = PROMPT + "\n" + self.state.header()
+            p_msgs = [{"role": "system", "content": sys_cnt}]
             
-        self.state.parse_cmd(cmd)
-        p_cwd = "~" if self.state.cwd == "/root" else self.state.cwd
-        self.prompt = f"{self.state.user}@{self.state.hostname} {p_cwd} # "
+            for i, m in enumerate(self.msgs[-6:]):
+                cnt = m["content"][-2000:]
+                if i == len(self.msgs[-6:]) - 1 and m["role"] == "user":
+                    cnt = f"Simulate the terminal output for this command:\n{cnt}"
+                p_msgs.append({"role": m["role"], "content": cnt})
 
-        if cmd == "clear":
-            self.clear(); self.new_prompt(); return
-        elif cmd in ("exit", "poweroff", "shutdown now"):
-            self.close(); return
-        elif cmd == "reboot":
-            self.clear(); self.on_chunk(BOOT); self.new_prompt(); return
-
-        if not self.k:
-            if cmd.startswith("gsk_"):
-                with open(K_FILE, "w") as f: f.write(cmd)
-                self.k = cmd
-                self.write_txt("groq api key saved successfully\n", "#55ff55")
-            else:
-                self.write_txt("enter your groq api key (gsk_...):\n", "#ffff55")
+            self.worker = Worker(self.k, p_msgs)
+            self.worker.chunk.connect(self.on_chunk)
+            self.worker.status.connect(self.on_status)
+            self.worker.done.connect(self.on_done)
+            self.worker.m_used.connect(lambda m: setattr(self, 'last_m', m))
+            
+            # Спиннер запускается МГНОВЕННО
+            self.spin_on()
+            self.worker.start()
+        except Exception as e:
+            self.is_busy = False
+            self.setReadOnly(False)
+            self.spin_off()
+            self.write_txt(f"error: {e}\n", "#ff5555")
             self.new_prompt()
-            return
-
-        self.is_busy = True; self.setReadOnly(True)
-        self.msgs.append({"role": "user", "content": cmd})
-        
-        sys_cnt = PROMPT + "\n" + self.state.header()
-        p_msgs = [{"role": "system", "content": sys_cnt}]
-        
-        for i, m in enumerate(self.msgs[-6:]):
-            cnt = m["content"][-2000:]
-            if i == len(self.msgs[-6:]) - 1 and m["role"] == "user":
-                cnt = f"Simulate the terminal output for this command:\n{cnt}"
-            p_msgs.append({"role": m["role"], "content": cnt})
-
-        self.worker = Worker(self.k, p_msgs)
-        self.worker.chunk.connect(self.on_chunk)
-        self.worker.status.connect(self.on_status)
-        self.worker.done.connect(self.on_done)
-        self.worker.m_used.connect(lambda m: setattr(self, 'last_m', m))
-        
-        self.spin_on()
-        self.worker.start()
 
     def on_chunk(self, chk):
         if self.spinning:
@@ -554,7 +565,7 @@ class Term(QPlainTextEdit):
             self.buf = self.buf[tag_end+2:]
             self.apply_tag(tag_body)
 
-    def apply_tag(self, tag):
+    def _apply_tag(self, tag):
         low = tag.lower()
         if low.startswith("color:"):
             v = low[6:].strip()
@@ -602,3 +613,5 @@ if __name__ == "__main__":
             subprocess.run(f"hyprctl keyword windowrulev2 '{r},title:^(ArchTTY)$' >/dev/null 2>&1", shell=True)
         
     win = Term(); win.show(); sys.exit(app.exec())
+EOF
+chmod +x ~/.local/bin/zae

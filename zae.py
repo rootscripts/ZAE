@@ -5,8 +5,13 @@ import urllib.request, urllib.error
 _W = platform.system() == "Windows"
 
 if _W:
-    import ssl, certifi
-    _ctx = ssl.create_default_context(cafile=certifi.where())
+    import ssl
+    _ctx = ssl.create_default_context()
+    try:
+        import certifi
+        _ctx = ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        pass
     _ctx.check_hostname = False
     _ctx.verify_mode = ssl.CERT_NONE
     _old_urlopen = urllib.request.urlopen
@@ -29,9 +34,9 @@ _TC = "#b0b0b0"
 _UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36 ZAE/3.0"
 
 _FM = [
-    "openai/gpt-oss-120b",
-    "openai/gpt-oss-20b",
     "qwen/qwen3.8-27b",
+    "openai/gpt-oss-20b",
+    "openai/gpt-oss-120b",
     "llama-3.3-70b-versatile",
     "llama-3.1-8b-instant",
     "gemma2-9b-it",
@@ -40,6 +45,8 @@ _FM = [
 
 _SKIP = ("whisper", "guard", "embed", "vision", "tool", "tts", "image",
          "compound", "orpheus", "safeguard", "allam")
+
+_mi = 0
 
 def _lk():
     e = os.environ.get("GROQ_API_KEY", "").strip()
@@ -176,45 +183,17 @@ class _St:
 
     def hdr(self):
         cf = []
-        for k, v in list(self.fs.items())[-6:]:
+        for k, v in list(self.fs.items())[-4:]:
             dk = k.replace("/root/", "~/") if self.u == "root" else k
-            cf.append(f"File: {dk}\n{v[:2000]}\n")
-        return f"[STATE: OS='{self.os}' HOST='{self.hn}' USER='{self.u}' CWD='{self.cd}']\n{''.join(cf)}\n"
+            cf.append(f"{dk}: {v[:800]}")
+        fs = "; ".join(cf)
+        return f"[OS={self.os} HOST={self.hn} USER={self.u} CWD={self.cd}]{' FILES: '+fs if fs else ''}"
 
 
-_SYS = r"""You are a raw Linux TTY. You output ONLY what a real terminal would print. No explanations. No conversation. No markdown.
-
-ABSOLUTE RULES:
-1. Output ONLY the exact text a real terminal would display. Nothing before, nothing after.
-2. NEVER say "I'm", "I can", "Here is", "Sure", "Let me" or ANY conversational text. You are not an assistant.
-3. NEVER wrap output in ```code blocks```.
-4. NEVER explain what a command does. NEVER add notes or commentary.
-5. For silent commands (cd, mkdir, touch, export, alias) output NOTHING — empty string.
-6. For commands with output (ls, cat, echo, ping, fastfetch, whoami, uname, date, etc.) you MUST produce realistic output.
-7. ALL standard packages are installed (cowsay, cmatrix, python3, nmap, htop, fastfetch, neofetch, curl, wget, etc).
-8. Simulate exactly 1 execution. Do NOT loop, repeat, or generate infinite output.
-
-SPECIAL TAGS (use when needed):
-<<color:#HEX>> — set text color
-<<color:reset>> — reset to default
-<<timeout:X>> — pause X seconds
-<<clear:zae_term>> — clear screen
-
-PING: simulate exactly 4 packets then stats summary, then STOP.
-
-FASTFETCH/NEOFETCH: If a custom logo exists in [STATE] at ~/.config/fastfetch/logo.txt, display it verbatim above specs. Otherwise use:
-<<color:#1793d1>>       /\         <<color:reset>> {USER}@{HOST}
-<<color:#1793d1>>      /  \        <<color:reset>> --------------
-<<color:#1793d1>>     /\   \       <<color:reset>> OS: {OS}
-<<color:#1793d1>>    /      \      <<color:reset>> Host: {HOST}
-<<color:#1793d1>>   /   ,,   \     <<color:reset>> Kernel: Linux 6.10.8
-<<color:#1793d1>>  /   |  |  -\    <<color:reset>> Shell: bash
-<<color:#1793d1>> /_-''    ''-_\  <<color:reset>> Memory: 1.2GiB / 16.0GiB
-
-CMD/WINDOWS: If user types 'cmd' or 'cmd.exe', switch to Windows Command Prompt (C:\>) simulation.
-
-COLOR COMMAND: If user runs 'color XY', apply <<color:#HEX>> with the matching DOS color.
-"""
+_SYS = r"""Raw Linux TTY emulator. Output ONLY what a real terminal prints. No chat. No markdown. No explanations.
+Rules: silent commands (cd,mkdir,touch,export)=empty output. All packages installed. Simulate 1 run only, never loop.
+Tags: <<color:#HEX>> <<color:reset>> <<timeout:X>> <<clear:zae_term>>
+ping=4 packets+stats then stop. fastfetch=arch logo+specs side by side. cmd/cmd.exe=switch to Windows C:\> prompt."""
 
 
 class _W_Thread(QThread):
@@ -223,26 +202,32 @@ class _W_Thread(QThread):
     done = pyqtSignal(str)
     mused = pyqtSignal(str)
 
-    def __init__(self, k, msgs):
+    def __init__(self, k, msgs, ml, silent=False):
         super().__init__()
         self._k = k
         self._msgs = msgs
         self._stop = False
-        self._ml = _gm(k)
+        self._ml = ml
+        self._silent = silent
 
     def cancel(self):
         self._stop = True
 
     def run(self):
+        global _mi
         wt = "a few seconds"
         lec = None
-        for mdl in self._ml:
+        ml = self._ml
+        order = ml[_mi:] + ml[:_mi]
+        for mdl in order:
             if self._stop: return
+            is_reason = "gpt-oss" in mdl
+            maxt = 2048 if is_reason else 800
             pl = {
                 "model": mdl,
                 "messages": self._msgs,
                 "temperature": 0.0,
-                "max_completion_tokens": 1200,
+                "max_completion_tokens": maxt,
                 "stream": True,
                 "top_p": 0.9,
             }
@@ -255,7 +240,7 @@ class _W_Thread(QThread):
                              "Content-Type": "application/json",
                              "User-Agent": _UA})
                 ft = []
-                with urllib.request.urlopen(rq, timeout=8) as rsp:
+                with urllib.request.urlopen(rq, timeout=10) as rsp:
                     for rl in rsp:
                         if self._stop: return
                         ln = rl.decode("utf-8", errors="ignore").strip()
@@ -272,6 +257,12 @@ class _W_Thread(QThread):
                             continue
                 ans = "".join(ft)
                 ans = _clean(ans)
+                if not ans.strip() and not self._silent:
+                    time.sleep(0.2)
+                    continue
+                if ans.strip():
+                    _mi = ml.index(mdl) + 1 if mdl in ml else 0
+                    if _mi >= len(ml): _mi = 0
                 self.done.emit(ans.rstrip())
                 return
             except urllib.error.HTTPError as e:
@@ -319,6 +310,7 @@ class _Term(QPlainTextEdit):
         self.resize(920, 580)
         self._k = _lk()
         self._fs = False
+        self._models = _gm(self._k)
         self.setFont(_gf(12))
         self.setCursorWidth(9)
         self.setStyleSheet("""
@@ -499,6 +491,7 @@ class _Term(QPlainTextEdit):
             if cmd.startswith("gsk_"):
                 with open(_KF, "w") as f: f.write(cmd)
                 self._k = cmd
+                self._models = _gm(self._k)
                 self._ic("groq api key saved\n", "#55ff55")
             else:
                 self._ic("enter your groq api key (gsk_...):\n", "#ffff55")
@@ -507,13 +500,15 @@ class _Term(QPlainTextEdit):
         self._msgs.append({"role": "user", "content": cmd})
         sc = _SYS + "\n" + self._st.hdr()
         pm = [{"role": "system", "content": sc}]
-        tail = self._msgs[-6:]
+        tail = self._msgs[-4:]
         for i, m in enumerate(tail):
-            ct = m["content"][-2000:]
+            ct = m["content"][-600:]
             if i == len(tail) - 1 and m["role"] == "user":
                 ct = f"$ {ct}"
             pm.append({"role": m["role"], "content": ct})
-        self._wk = _W_Thread(self._k, pm)
+        _sc = cmd.split()[0] if cmd.split() else ""
+        _silent = _sc in ("cd", "mkdir", "touch", "export", "alias", "unset", "source", "chmod", "chown", "mv", "cp", "rm")
+        self._wk = _W_Thread(self._k, pm, self._models, silent=_silent)
         self._wk.chunk.connect(self._otc)
         self._wk.stat.connect(self._osu)
         self._wk.done.connect(self._odf)
@@ -580,9 +575,9 @@ class _Term(QPlainTextEdit):
             self._sb = ""
         if raw and not raw.endswith("\n"):
             self._ic("\n", _TC)
-        if len(self._msgs) > 40:
-            self._msgs = self._msgs[-16:]
-        self._msgs.append({"role": "assistant", "content": raw[:800]})
+        if len(self._msgs) > 30:
+            self._msgs = self._msgs[-10:]
+        self._msgs.append({"role": "assistant", "content": raw[:400]})
         self._busy = False; self.setReadOnly(False)
         self._np()
 

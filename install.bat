@@ -25,7 +25,7 @@ if exist "%~dp0zae.py" (
     copy /Y "%~dp0zae.py" "%TARGET_DIR%\zae.py" >nul
 ) else (
     echo [ZAE] Downloading zae.py...
-    python -c "import urllib.request, os; urllib.request.urlretrieve('https://raw.githubusercontent.com/rootscripts/ZAE/main/zae.py', os.path.expanduser('~/.local/bin/zae.py'))"
+    python -c "import urllib.request, os, ssl; ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE; urllib.request.urlretrieve('https://raw.githubusercontent.com/rootscripts/ZAE/main/zae.py', os.path.expanduser('~/.local/bin/zae.py'), context=ctx)"
 )
 
 (

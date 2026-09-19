@@ -286,7 +286,7 @@ class Worker(QThread):
             elif err_code is not None:
                 self.chunk.emit(f"<<color:#ff5555>>groq: API error {err_code} :( Please try again.<<color:reset>>\n")
             else:
-                self.chunk.emit(f"<<color:#ff5555>>groq: network error ({err_detail}) :( Check internet or API key.<<color:reset>>\n")
+                self.chunk.emit(f"<<color:#ff5555>>groq: network error ({err_detail or 'Connection failed'}) :( Check internet or API key.<<color:reset>>\n")
             self.done.emit("")
 
 class Term(QPlainTextEdit):

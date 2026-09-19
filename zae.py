@@ -1,4 +1,4 @@
-import sys, os, time, subprocess, json, urllib.request, urllib.error, re
+import sys, os, time, subprocess, json, urllib.request, urllib.error, re, ssl
 from PyQt6.QtWidgets import QApplication, QPlainTextEdit
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QEventLoop
 from PyQt6.QtGui import QFont, QTextCursor, QTextCharFormat, QColor, QFontDatabase
@@ -32,9 +32,12 @@ def get_k():
 def get_m(k):
     if not k: return MODELS
     try:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
         url = "https://api.groq.com/openai/v1/models"
         req = urllib.request.Request(url, headers={"Authorization": f"Bearer {k}", "User-Agent": UA})
-        with urllib.request.urlopen(req, timeout=3.0) as resp:
+        with urllib.request.urlopen(req, timeout=3.0, context=ctx) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             live = [m["id"] for m in data.get("data", []) if not any(x in m["id"] for x in ("whisper", "guard", "embedding", "vision", "tool"))]
             if live:
@@ -50,8 +53,11 @@ def get_font():
         ]
         for url in urls:
             try:
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
                 req = urllib.request.Request(url, headers={"User-Agent": UA})
-                with urllib.request.urlopen(req, timeout=3) as resp:
+                with urllib.request.urlopen(req, timeout=3, context=ctx) as resp:
                     if resp.status == 200:
                         data = resp.read()
                         if len(data) > 1000:
@@ -195,6 +201,11 @@ class Worker(QThread):
     def run(self):
         w_time = "a few seconds"
         err_code = None
+        err_detail = ""
+        
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
         
         for m in self.models:
             if self.cancelled: return
@@ -214,7 +225,7 @@ class Worker(QThread):
                     headers={"Authorization": f"Bearer {self.k}", "Content-Type": "application/json", "User-Agent": UA}
                 )
                 buf_txt = []
-                with urllib.request.urlopen(req, timeout=6) as resp:
+                with urllib.request.urlopen(req, timeout=6, context=ctx) as resp:
                     for raw_line in resp:
                         if self.cancelled: return
                         line = raw_line.decode("utf-8", errors="ignore").strip()
@@ -261,8 +272,9 @@ class Worker(QThread):
                 
                 time.sleep(0.2)
                 continue
-            except Exception:
+            except Exception as e:
                 if self.cancelled: return
+                err_detail = str(e)
                 time.sleep(0.2)
                 continue
 
@@ -271,8 +283,10 @@ class Worker(QThread):
                 self.chunk.emit(f"<<color:#ff5555>>groq: rate limit cooldown active :( Please wait {w_time}.<<color:reset>>\n")
             elif err_code == 400:
                 self.chunk.emit("<<color:#ff5555>>groq: context window full :( Type 'clear'.<<color:reset>>\n")
-            elif err_code != 403:
+            elif err_code is not None:
                 self.chunk.emit(f"<<color:#ff5555>>groq: API error {err_code} :( Please try again.<<color:reset>>\n")
+            else:
+                self.chunk.emit(f"<<color:#ff5555>>groq: network error ({err_detail}) :( Check internet or API key.<<color:reset>>\n")
             self.done.emit("")
 
 class Term(QPlainTextEdit):

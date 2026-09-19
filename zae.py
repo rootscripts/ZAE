@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import sys, os, time, subprocess, json, urllib.request, urllib.error, re, ssl
 from PyQt6.QtWidgets import QApplication, QPlainTextEdit
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QEventLoop
@@ -452,7 +453,7 @@ class Term(QPlainTextEdit):
                 self.hist_idx = len(self.hist); self.replace_input("")
             return
 
-        if e.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+        if e.key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             c.movePosition(QTextCursor.MoveOperation.End)
             self.setTextCursor(c)
             cmd = self.toPlainText()[self.prompt_pos:].strip()

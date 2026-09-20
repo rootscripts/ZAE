@@ -10,6 +10,11 @@ ZAE renders a fake Arch Linux TTY with a boot sequence, prompt, command history,
 
 Works on Linux (X11, Wayland, Hyprland) and Windows.
 
+# WARNING
+This is completely emulation of a virtual machine powered by AI.
+AI gives not 100% accurate response. Please don't report issues about bad responses or hallucinations.
+The terminal can't touch your PC.
+
 ## What it does
 
 You type a command like `ls`, `ping google.com`, `fastfetch`, `cowsay hello`. ZAE sends it to Groq, gets back what a real terminal would print, and renders it in the window with color support and a retro IBM VGA font.

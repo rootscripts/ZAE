@@ -114,42 +114,30 @@ def _256_to_hex(n):
 def tags_to_ansi(txt):
     if not txt:
         return ""
+
     def _sub_color(m):
         tag = m.group(1).lower()
-        val = m.group(2).strip().lower()
-        if tag == "color":
-            if val == "reset":
-                return "\033[0m"
-            if val.startswith("#"):
-                h = val[1:]
-                if len(h) == 3:
-                    h = "".join(c * 2 for c in h)
-                if len(h) == 6:
-                    try:
-                        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-                        return f"\033[38;2;{r};{g};{b}m"
-                    except ValueError:
-                        pass
-        elif tag == "bgcolor":
-            if val == "reset":
-                return "\033[49m"
-            if val.startswith("#"):
-                h = val[1:]
-                if len(h) == 3:
-                    h = "".join(c * 2 for c in h)
-                if len(h) == 6:
-                    try:
-                        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-                        return f"\033[48;2;{r};{g};{b}m"
-                    except ValueError:
-                        pass
+        val = (m.group(2) or "").strip().lower()
+        if not val or val == "reset":
+            return "\033[0m" if tag == "color" else "\033[49m"
+        if val.startswith("#"):
+            h = val[1:]
+            if len(h) == 3:
+                h = "".join(c * 2 for c in h)
+            if len(h) == 6:
+                try:
+                    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+                    code = 38 if tag == "color" else 48
+                    return f"\033[{code};2;{r};{g};{b}m"
+                except ValueError:
+                    pass
         return ""
 
-    txt = re.sub(r'<{1,2}(color|bgcolor):([^<>]+)>{1,2}', _sub_color, txt, flags=re.IGNORECASE)
+    txt = re.sub(r'<{1,2}/?(color|bgcolor)(?::\s*([^>]+?))?>{1,2}', _sub_color, txt, flags=re.IGNORECASE)
+    txt = re.sub(r'\b(color|bgcolor):\s*(#[0-9a-fA-F]{3,8}|reset)\b', _sub_color, txt, flags=re.IGNORECASE)
     txt = re.sub(r'<{1,2}clear:zae_term>{1,2}', '\033[2J\033[H', txt, flags=re.IGNORECASE)
-    txt = re.sub(r'\b(color|bgcolor):(#[0-9a-fA-F]{3,8}|reset)\b', _sub_color, txt, flags=re.IGNORECASE)
     txt = re.sub(r'\bclear:zae_term\b', '\033[2J\033[H', txt, flags=re.IGNORECASE)
-    txt = re.sub(r'<{0,2}(?:color|bgcolor):[^\s<>]+>{0,2}', '', txt, flags=re.IGNORECASE)
+    txt = re.sub(r'<{1,2}/?(?:color|bgcolor)(?::[^>]+)?>{1,2}', '', txt, flags=re.IGNORECASE)
     return txt
 
 def _lk():
@@ -219,9 +207,7 @@ def _gf(sz=12):
 _STRIP_PATTERNS = [
     re.compile(r"^```[\w]*\n?", re.MULTILINE),
     re.compile(r"\n?```$", re.MULTILINE),
-    re.compile(r"^(Here is|Here's|Sure|I'll|I will|I can|I'm|Okay|OK|Let me|Of course|Certainly)[^\n]*\n?", re.IGNORECASE),
-    re.compile(r"^(The output|This would|This will|This shows|Note:|Note that|As you|In this)[^\n]*\n?", re.IGNORECASE),
-    re.compile(r"^\s*\*\*[^\n]*\*\*\s*\n?"),
+    re.compile(r"^(?:Here is|Sure,|I can help|Here's the output)[^\n]*\n?", re.IGNORECASE),
 ]
 
 def _clean(txt):
@@ -506,11 +492,16 @@ class _St:
 
     def hdr(self):
         cf = []
-        for k, v in list(self.fs.items())[-12:]:
-            preview = f'="{v[:40]}"' if v else ""
+        for k, v in list(self.fs.items())[-15:]:
+            preview = f'="{v[:60]}"' if v else ""
             cf.append(f"{k}{preview}")
-        df = list(self.dirs)[-8:]
-        info = [f"OS={self.os}", f"CWD={self.cd}"]
+        df = list(self.dirs)[-10:]
+        info = [
+            f"PLATFORM={self.plat}",
+            f"SHELL={self.shell}",
+            f"OS={self.os}",
+            f"CWD={self.cd}"
+        ]
         if cf: info.append(f"VFS_FILES: {', '.join(cf)}")
         if df: info.append(f"VFS_DIRS: {', '.join(df)}")
         return "[" + " | ".join(info) + "]"
@@ -526,45 +517,15 @@ RULES:
 
 WINDOWS CMD EMULATION:
 When PLATFORM is windows and SHELL is cmd:
-Never translate Unix commands to Windows commands! If the user enters a command that does not exist in Windows CMD (such as 'ls', 'cat', 'rm', 'pwd', 'clear', 'touch', 'grep', 'cp', 'mv'), output the exact standard Windows error message:
+NEVER translate Unix commands to Windows commands! If the user enters a command that does not exist in Windows CMD (such as 'ls', 'cat', 'rm', 'pwd', 'clear', 'touch', 'grep', 'cp', 'mv'), output the exact standard Windows CMD error:
 '{command}' is not recognized as an internal or external command, operable program or batch file.
-Do NOT run 'dir' when user typed 'ls'. Strictly emulate cmd.exe behavior.
+For 'ls', output:
+'ls' is not recognized as an internal or external command, operable program or batch file.
+Do NOT execute 'dir' when user typed 'ls'. Strictly emulate cmd.exe behavior.
 
 CRITICAL CWD TRACKING: Track Current Working Directory. When directory changes via 'cd', relative paths and listings MUST strictly match active CWD.
 
-PERSISTENCE: Maintain persistent virtual filesystem state in memory for active session. Files created with echo, touch, mkdir, or redirected output MUST exist in subsequent 'dir', 'ls', and 'type' calls until deleted. Reflect all items from [VFS_FILES: ...] and [VFS_DIRS: ...].
-
-FASTFETCH (2 parallel columns side-by-side, art on left, info on right):
-Windows 10/11:
-<color:#0078d4>████████   ████████<color:reset>   root@DESKTOP-ZAE
-<color:#0078d4>████████   ████████<color:reset>   ----------------
-<color:#0078d4>████████   ████████<color:reset>   <color:#0078d4>OS<color:reset>: Windows 11 Pro 23H2 x86_64
-<color:#0078d4>████████   ████████<color:reset>   <color:#0078d4>Host<color:reset>: Virtual Machine
-<color:#0078d4>                   <color:reset>   <color:#0078d4>Kernel<color:reset>: 10.0.22631
-<color:#0078d4>████████   ████████<color:reset>   <color:#0078d4>Uptime<color:reset>: 2 mins
-<color:#0078d4>████████   ████████<color:reset>   <color:#0078d4>Shell<color:reset>: cmd
-<color:#0078d4>████████   ████████<color:reset>   <color:#0078d4>CPU<color:reset>: AMD EPYC 7763 (4) @ 2.45 GHz
-<color:#0078d4>████████   ████████<color:reset>   <color:#0078d4>Memory<color:reset>: 1024 MiB / 16384 MiB
-Arch Linux:
-<color:#1793d1>         /\          <color:reset>   root@archiso
-<color:#1793d1>        /  \         <color:reset>   ------------
-<color:#1793d1>       /\   \        <color:reset>   <color:#1793d1>OS<color:reset>: Arch Linux x86_64
-<color:#1793d1>      /      \       <color:reset>   <color:#1793d1>Host<color:reset>: QEMU Virtual Machine
-<color:#1793d1>     /   ,,   \      <color:reset>   <color:#1793d1>Kernel<color:reset>: 6.10.8-arch1
-<color:#1793d1>    /   |  |  -\     <color:reset>   <color:#1793d1>Uptime<color:reset>: 3 mins
-<color:#1793d1>   /_-''    ''-_\    <color:reset>   <color:#1793d1>Shell<color:reset>: bash 5.2.32
-<color:#1793d1>  (____      ____)   <color:reset>   <color:#1793d1>CPU<color:reset>: AMD EPYC 7763 (4) @ 2.45 GHz
-<color:#1793d1>       `----'        <color:reset>   <color:#1793d1>Memory<color:reset>: 247 MiB / 16384 MiB
-Ubuntu:
-<color:#e95420>          _          <color:reset>   root@ubuntu
-<color:#e95420>      ---(_)         <color:reset>   -----------
-<color:#e95420>  _/  ---  \         <color:reset>   <color:#e95420>OS<color:reset>: Ubuntu 24.04 LTS x86_64
-<color:#e95420> (_) |   |           <color:reset>   <color:#e95420>Host<color:reset>: Virtual Machine
-<color:#e95420>   \  --- _/         <color:reset>   <color:#e95420>Kernel<color:reset>: 6.8.0-41-generic
-<color:#e95420>      ---(_)         <color:reset>   <color:#e95420>Uptime<color:reset>: 5 mins
-<color:#e95420>                     <color:reset>   <color:#e95420>Shell<color:reset>: bash 5.2.21
-<color:#e95420>                     <color:reset>   <color:#e95420>CPU<color:reset>: AMD EPYC 7763 (4) @ 2.45 GHz
-<color:#e95420>                     <color:reset>   <color:#e95420>Memory<color:reset>: 312 MiB / 16384 MiB"""
+PERSISTENCE: Maintain persistent virtual filesystem state in memory for active session. Files created with echo, touch, mkdir, or redirected output MUST exist in subsequent 'dir', 'ls', and 'type' calls until deleted. Reflect all items from [VFS_FILES: ...] and [VFS_DIRS: ...]. If user runs 'type <file>' or 'cat <file>', output the exact file content from [VFS_FILES: ...]. For compound commands like 'color 0a & type test.txt', execute all parts and output the file content."""
 
 
 _BOOT = r"""<clear:zae_term>
@@ -676,18 +637,15 @@ class _W_Thread(QThread):
                                 pre = combined.split(tag)[0]
                                 if pre:
                                     rem = pre[len(_line_buf):]
-                                    if rem and not self._silent:
+                                    if rem:
                                         ft.append(rem)
                                         self.chunk.emit(rem)
                                 ft.append("<request>")
                                 _line_buf = ""
                                 break
 
-                            if not self._silent:
-                                ft.append(dt)
-                                self.chunk.emit(dt)
-                            else:
-                                ft.append(dt)
+                            ft.append(dt)
+                            self.chunk.emit(dt)
 
                             _line_buf += dt
                             newlines = _line_buf.count("\n")
@@ -906,9 +864,9 @@ class _Term(QPlainTextEdit):
             except Exception:
                 pass
         txt = re.sub(r'<{1,2}timeout:[\d\.]+>{1,2}', '', txt, flags=re.IGNORECASE)
+        txt = re.sub(r'<{1,2}request>{1,2}', '', txt, flags=re.IGNORECASE)
 
         txt = tags_to_ansi(txt)
-        txt = re.sub(r'<{1,2}request>{1,2}', '', txt)
 
         ansi_re = re.compile(r'(?:\x1b|\033|\\e)\[([0-9;]*)([a-zA-Z])')
         last_idx = 0
@@ -992,6 +950,116 @@ class _Term(QPlainTextEdit):
         c.removeSelectedText()
         fmt = QTextCharFormat(); fmt.setForeground(QColor(self._cc))
         c.insertText(txt, fmt); self.setTextCursor(c)
+
+    def _get_fastfetch(self):
+        plat = self._st.plat
+        os_name = self._st.os
+        user_host = f"{self._st.u}@{self._st.hn}"
+        divider = "-" * len(user_host)
+
+        if plat == "windows":
+            c = "#0078d4"
+            logo_lines = [
+                f"<{c}>████████   ████████<reset>",
+                f"<{c}>████████   ████████<reset>",
+                f"<{c}>████████   ████████<reset>",
+                f"<{c}>████████   ████████<reset>",
+                f"<{c}>                   <reset>",
+                f"<{c}>████████   ████████<reset>",
+                f"<{c}>████████   ████████<reset>",
+                f"<{c}>████████   ████████<reset>",
+                f"<{c}>████████   ████████<reset>",
+            ]
+            info_lines = [
+                user_host,
+                divider,
+                f"<{c}>OS<reset>: {os_name}",
+                f"<{c}>Host<reset>: Virtual Machine",
+                f"<{c}>Kernel<reset>: 10.0.22631",
+                f"<{c}>Uptime<reset>: 5 mins",
+                f"<{c}>Shell<reset>: cmd.exe",
+                f"<{c}>CPU<reset>: AMD EPYC 7763 (4) @ 2.45 GHz",
+                f"<{c}>Memory<reset>: 1024 MiB / 16384 MiB",
+            ]
+        elif "ubuntu" in os_name.lower():
+            c = "#e95420"
+            logo_lines = [
+                f"<{c}>          _          <reset>",
+                f"<{c}>      ---(_)         <reset>",
+                f"<{c}>  _/  ---  \\         <reset>",
+                f"<{c}> (_) |   |           <reset>",
+                f"<{c}>   \\  --- _/         <reset>",
+                f"<{c}>      ---(_)         <reset>",
+                f"<{c}>                     <reset>",
+                f"<{c}>                     <reset>",
+                f"<{c}>                     <reset>",
+            ]
+            info_lines = [
+                user_host,
+                divider,
+                f"<{c}>OS<reset>: {os_name}",
+                f"<{c}>Host<reset>: Virtual Machine",
+                f"<{c}>Kernel<reset>: 6.8.0-41-generic",
+                f"<{c}>Uptime<reset>: 5 mins",
+                f"<{c}>Shell<reset>: bash 5.2.21",
+                f"<{c}>CPU<reset>: AMD EPYC 7763 (4) @ 2.45 GHz",
+                f"<{c}>Memory<reset>: 312 MiB / 16384 MiB",
+            ]
+        elif plat == "macos":
+            c = "#b0b0b0"
+            logo_lines = [
+                f"<{c}>                    <reset>",
+                f"<{c}>          .:'       <reset>",
+                f"<{c}>       __ :'__      <reset>",
+                f"<{c}>    .'`__`-'__``.   <reset>",
+                f"<{c}>   :__________.-'   <reset>",
+                f"<{c}>   :_________:      <reset>",
+                f"<{c}>    :_________`-;   <reset>",
+                f"<{c}>     `.__.-.__.'    <reset>",
+                f"<{c}>                    <reset>",
+            ]
+            info_lines = [
+                user_host,
+                divider,
+                f"<{c}>OS<reset>: {os_name}",
+                f"<{c}>Host<reset>: Mac Virtual Machine",
+                f"<{c}>Kernel<reset>: 23.5.0",
+                f"<{c}>Uptime<reset>: 5 mins",
+                f"<{c}>Shell<reset>: zsh 5.9",
+                f"<{c}>CPU<reset>: Apple M3 Max (16)",
+                f"<{c}>Memory<reset>: 2048 MiB / 32768 MiB",
+            ]
+        else:
+            c = "#1793d1"
+            logo_lines = [
+                f"<{c}>         /\\          <reset>",
+                f"<{c}>        /  \\         <reset>",
+                f"<{c}>       /\\   \\        <reset>",
+                f"<{c}>      /      \\       <reset>",
+                f"<{c}>     /   ,,   \\      <reset>",
+                f"<{c}>    /   |  |  -\\     <reset>",
+                f"<{c}>   /_-''    ''-_\\    <reset>",
+                f"<{c}>  (____      ____)   <reset>",
+                f"<{c}>       `----'        <reset>",
+            ]
+            info_lines = [
+                user_host,
+                divider,
+                f"<{c}>OS<reset>: {os_name}",
+                f"<{c}>Host<reset>: QEMU Virtual Machine",
+                f"<{c}>Kernel<reset>: 6.10.8-arch1",
+                f"<{c}>Uptime<reset>: 5 mins",
+                f"<{c}>Shell<reset>: bash 5.2.32",
+                f"<{c}>CPU<reset>: AMD EPYC 7763 (4) @ 2.45 GHz",
+                f"<{c}>Memory<reset>: 247 MiB / 16384 MiB",
+            ]
+
+        out = []
+        for l, r in zip(logo_lines, info_lines):
+            l_str = l.replace(f"<{c}>", f"<color:{c}>").replace("<reset>", "<color:reset>")
+            r_str = r.replace(f"<{c}>", f"<color:{c}>").replace("<reset>", "<color:reset>")
+            out.append(f"{l_str}   {r_str}")
+        return "\n".join(out)
 
     def _draw_model_menu(self):
         c = self.textCursor()
@@ -1221,17 +1289,26 @@ class _Term(QPlainTextEdit):
 
         _lc = cmd.strip().lower()
 
+        if _lc in ("fastfetch", "neofetch"):
+            ff = self._get_fastfetch()
+            self._parse_and_insert(ff + "\n")
+            self._msgs.append({"role": "user", "content": cmd})
+            self._msgs.append({"role": "assistant", "content": _compress_for_history(ff)})
+            self._np()
+            return
+
         if self._st.plat == "windows":
-            cm = re.match(r'^color\s+([0-9a-fA-F])([0-9a-fA-F])$', _lc)
+            cm = re.search(r'\bcolor\s+([0-9a-fA-F])([0-9a-fA-F])\b', cmd, re.IGNORECASE)
             if cm:
                 bg_d = cm.group(1)
                 fg_d = cm.group(2)
-                self._bg_cc = _CMD_COLORS.get(bg_d, "#000000")
-                self._default_fg = _CMD_COLORS.get(fg_d, "#55ff55")
+                self._bg_cc = _CMD_COLORS.get(bg_d.lower(), "#000000")
+                self._default_fg = _CMD_COLORS.get(fg_d.lower(), "#55ff55")
                 self._cc = self._default_fg
                 self._update_style()
-                self._np()
-                return
+                if re.fullmatch(r'^\s*color\s+[0-9a-fA-F]{2}\s*$', cmd, re.IGNORECASE):
+                    self._np()
+                    return
             if _lc == "cls":
                 self.clear(); self._np(); return
         else:
@@ -1259,10 +1336,21 @@ class _Term(QPlainTextEdit):
         sc = self._get_sys_prompt() + "\n" + self._st.hdr()
         pm = [{"role": "system", "content": sc}] + self._msgs[-8:]
 
-        _sc = cmd.split()[0] if cmd.split() else ""
-        _silent = _sc.lower() in ("cd", "mkdir", "touch", "export", "alias", "unset", "source",
-                                   "chmod", "chown", "mv", "cp", "rm",
-                                   "md", "set", "cd.", "attrib", "cd..", "color", "copy", "ren", "del", "erase") or bool(re.search(r'(?:>>|>)\s*\S+', cmd))
+        _silent = False
+        subparts = [p.strip() for p in re.split(r'[;&|]+', cmd) if p.strip()]
+        if subparts:
+            all_silent = True
+            for sp in subparts:
+                first_w = sp.split()[0].lower() if sp.split() else ""
+                is_redirect = bool(re.search(r'(?:>>|>)\s*\S+', sp))
+                is_silent_cmd = first_w in ("cd", "mkdir", "touch", "export", "alias", "unset", "source",
+                                           "chmod", "chown", "mv", "cp", "rm", "md", "set", "cd.", "attrib",
+                                           "cd..", "color", "copy", "ren", "del", "erase")
+                if not (is_redirect or is_silent_cmd):
+                    all_silent = False
+                    break
+            _silent = all_silent
+
         self._spin_status = ""
         self._wk = _W_Thread(self._k, pm, self._models, silent=_silent)
         self._wk.chunk.connect(self._otc)
@@ -1291,20 +1379,21 @@ class _Term(QPlainTextEdit):
         if self._sb.strip().lower() in ("[ok]", "ok", "[ ok ]"):
             return
 
-        to_process = self._sb
-        self._sb = ""
+        m_tag = re.search(r'<{1,2}/?[a-zA-Z0-9_:#]{0,30}$', self._sb)
+        m_esc = re.search(r'(?:\x1b|\033|\\e)\[[0-9;]*$', self._sb)
 
-        last_lt = to_process.rfind("<")
-        if last_lt != -1 and ">" not in to_process[last_lt:]:
-            tail = to_process[last_lt:]
-            if len(tail) < 50 and re.match(r'^<{1,2}[a-zA-Z0-9_:#\.\-]*$', tail):
-                self._sb = tail + self._sb
-                to_process = to_process[:last_lt]
-
-        m_esc = re.search(r'(?:\x1b|\033|\\e)(?:\[[0-9;]*)?$', to_process)
+        hold_pos = len(self._sb)
+        if m_tag and ("<" in m_tag.group(0)):
+            hold_pos = min(hold_pos, m_tag.start())
         if m_esc:
-            self._sb = m_esc.group(0) + self._sb
-            to_process = to_process[:m_esc.start()]
+            hold_pos = min(hold_pos, m_esc.start())
+
+        if hold_pos < len(self._sb) and (len(self._sb) - hold_pos) <= 35:
+            to_process = self._sb[:hold_pos]
+            self._sb = self._sb[hold_pos:]
+        else:
+            to_process = self._sb
+            self._sb = ""
 
         if to_process:
             if to_process.strip().lower() in ("[ok]", "ok", "[ ok ]"):

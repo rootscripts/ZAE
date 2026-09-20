@@ -36,13 +36,19 @@ _UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124.0 Safari/53
 _FM = [
     "llama-3.3-70b-versatile",
     "llama-3.1-8b-instant",
+    "llama3-70b-8192",
+    "llama3-8b-8192",
+    "qwen-2.5-32b",
+    "qwen-2.5-coder-32b",
+    "mixtral-8x7b-32768",
+    "gemma2-9b-it",
     "meta-llama/llama-4-scout-17b-16e-instruct",
     "qwen/qwen3-32b",
     "openai/gpt-oss-20b",
     "openai/gpt-oss-120b",
 ]
 
-_REASON_MODELS = ("gpt-oss", "qwen3")
+_REASON_MODELS = ("gpt-oss", "qwen3", "qwen-2.5")
 
 _SKIP = ("whisper", "guard", "embed", "vision", "tool", "tts", "image",
          "compound", "orpheus", "safeguard", "allam")
@@ -253,7 +259,7 @@ HARD RULES:
 9. When user sends a bare input like "y", "n", "1", "2", "yes", "no", or any short text after a previous command that asked for input: treat it as the ANSWER to the previous interactive prompt. Do NOT treat it as a shell command. Produce the realistic continuation of the previous interactive session as if the user typed that answer at the prompt.
 
 CRITICAL - OUTPUT LENGTH CONTROL:
-- For commands that produce long output (ls with many files, find, pacman -Ss, apt list, yay, pip list, dir /s, tree, log files, etc.): produce a REALISTIC but COMPACT slice. Show 15-30 representative lines, then a blank line. NEVER generate more than 40 lines of listing output. This simulates a real terminal where output scrolls past.
+- CRITICAL: Never loop identical lines. If command output is huge (like dir /s, ls -R, find /, pacman -Ss, apt list, yay, pip list, tree), output only 30 realistic lines, write '[... truncated ...]' and immediately stop.
 - For `ping`: show 4 packets + statistics, then stop.
 - NEVER repeat the same pattern of lines. If you notice yourself outputting similar lines, STOP IMMEDIATELY.
 
@@ -319,9 +325,7 @@ For Windows:
 Tags you may use: <<color:#HEX>> <<color:reset>> <<timeout:X>> <<clear:zae_term>> <<request>>. Always close tags properly."""
 
 
-def _make_boot(os_name, plat):
-    if plat == "windows":
-        return f"""<<clear:zae_term>>
+_BOOT = r"""<<clear:zae_term>>
 <<color:#ff1744>>███████╗ <<color:#ff9100>>█████╗  <<color:#ffea00>>███████╗
 <<color:#ff007f>>╚══███╔╝<<color:#ffab00>>██╔══██╗<<color:#ffff00>>██╔════╝
 <<color:#d500f9>>  ███╔╝ <<color:#00e676>>███████║<<color:#00e5ff>>█████╗
@@ -331,63 +335,8 @@ def _make_boot(os_name, plat):
 
 <<color:#ff007f>>:3<<color:reset>> <<color:#6272a4>>a virtual machine that can run any OS. v3. Powered by Groq. github: @rootlesszen<<color:reset>>
 <<timeout:0.18>>
-BIOS Version 4.10-ZAE (CP437 IBM VGA text mode)
-Memory Test: 16384KB OK<<timeout:0.10>>
-Booting {os_name}...<<timeout:0.15>>
-
-Microsoft Windows [Version 10.0.22631.4037]
-(c) Microsoft Corporation. All rights reserved.
-
+Press F11 for Fullscreen, Esc to exit.
 """
-    elif plat == "macos":
-        return f"""<<clear:zae_term>>
-<<color:#ff1744>>███████╗ <<color:#ff9100>>█████╗  <<color:#ffea00>>███████╗
-<<color:#ff007f>>╚══███╔╝<<color:#ffab00>>██╔══██╗<<color:#ffff00>>██╔════╝
-<<color:#d500f9>>  ███╔╝ <<color:#00e676>>███████║<<color:#00e5ff>>█████╗
-<<color:#aa00ff>> ███╔╝  <<color:#00c853>>██╔══██║<<color:#00b0ff>>██╔══╝
-<<color:#651fff>>███████╗<<color:#1de9b6>>██║  ██║<<color:#2979ff>>███████╗
-<<color:#3d5afe>>╚══════╝<<color:#00bfa5>>╚═╝  ╚═╝<<color:#304ffe>>╚══════╝<<color:reset>>
-
-<<color:#ff007f>>:3<<color:reset>> <<color:#6272a4>>a virtual machine that can run any OS. v3. Powered by Groq. github: @rootlesszen<<color:reset>>
-<<timeout:0.18>>
-BIOS Version 4.10-ZAE (CP437 IBM VGA text mode)
-Memory Test: 16384KB OK<<timeout:0.10>>
-Booting {os_name}...<<timeout:0.15>>
-
-Last login: {time.strftime('%a %b %d %H:%M:%S')} on ttys000
-
-"""
-    else:
-        hn_guess = "archiso"
-        lo = os_name.lower()
-        if "ubuntu" in lo: hn_guess = "ubuntu"
-        elif "fedora" in lo: hn_guess = "fedora"
-        elif "debian" in lo: hn_guess = "debian"
-        elif "arch" not in lo:
-            hn_guess = re.sub(r'[^a-z0-9]', '', lo.split()[0])[:12] or "zae"
-        return f"""<<clear:zae_term>>
-<<color:#ff1744>>███████╗ <<color:#ff9100>>█████╗  <<color:#ffea00>>███████╗
-<<color:#ff007f>>╚══███╔╝<<color:#ffab00>>██╔══██╗<<color:#ffff00>>██╔════╝
-<<color:#d500f9>>  ███╔╝ <<color:#00e676>>███████║<<color:#00e5ff>>█████╗
-<<color:#aa00ff>> ███╔╝  <<color:#00c853>>██╔══██║<<color:#00b0ff>>██╔══╝
-<<color:#651fff>>███████╗<<color:#1de9b6>>██║  ██║<<color:#2979ff>>███████╗
-<<color:#3d5afe>>╚══════╝<<color:#00bfa5>>╚═╝  ╚═╝<<color:#304ffe>>╚══════╝<<color:reset>>
-
-<<color:#ff007f>>:3<<color:reset>> <<color:#6272a4>>a virtual machine that can run any OS. v3. Powered by Groq. github: @rootlesszen<<color:reset>>
-<<timeout:0.18>>
-BIOS Version 4.10-ZAE (CP437 IBM VGA text mode)
-Memory Test: 16384KB OK<<timeout:0.10>>
-Booting from Live Media ({os_name})...<<timeout:0.15>>
-
-<<color:#55ff55>>[  OK  ]<<color:reset>> Started D-Bus System Message Bus.<<timeout:0.02>>
-<<color:#55ff55>>[  OK  ]<<color:reset>> Started Network Time Synchronization.<<timeout:0.02>>
-<<color:#55ff55>>[  OK  ]<<color:reset>> Reached target Multi-User System.<<timeout:0.05>>
-
-{os_name} 6.10.8-arch1 (tty1)
-Type 'archinstall' to install. Press F11 for Fullscreen, Esc to exit.
-"""
-
-_BOOT_DEFAULT = _make_boot("Arch Linux x86_64", "linux")
 
 
 class _W_Thread(QThread):
@@ -423,10 +372,12 @@ class _W_Thread(QThread):
             pl = {
                 "model": mdl,
                 "messages": self._msgs,
-                "temperature": 0.0,
+                "temperature": 0.1,
                 "max_completion_tokens": maxt,
                 "stream": True,
                 "top_p": 0.85,
+                "presence_penalty": 0.3,
+                "frequency_penalty": 0.5,
             }
             if is_reason:
                 pl["reasoning_effort"] = "low"
@@ -457,7 +408,8 @@ class _W_Thread(QThread):
                         if ds == "[DONE]": break
                         try:
                             c = json.loads(ds)
-                            dt = c.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                            delta = c.get("choices", [{}])[0].get("delta", {})
+                            dt = delta.get("content", "") or delta.get("reasoning_content", "") or delta.get("reasoning", "") or ""
                             if dt:
                                 if "<<request>>" in (_line_buf + dt):
                                     pre = (_line_buf + dt).split("<<request>>")[0]
@@ -603,7 +555,8 @@ class _Term(QPlainTextEdit):
         self._model_menu_active = False
         self._model_menu_idx = 0
         self._model_menu_start_pos = 0
-        self._otc(_BOOT_DEFAULT)
+        self._sys_override = None
+        self._otc(_BOOT)
         self._np()
 
     def mousePressEvent(self, e):
@@ -817,7 +770,7 @@ class _Term(QPlainTextEdit):
         self._busy = True
         self.setReadOnly(True)
         self._msgs.append({"role": "user", "content": answer})
-        sc = _SYS + "\n" + self._st.hdr()
+        sc = self._get_sys_prompt() + "\n" + self._st.hdr()
         pm = [{"role": "system", "content": sc}]
         tail = self._msgs[-6:]
         for m in tail:
@@ -831,22 +784,6 @@ class _Term(QPlainTextEdit):
         self._ss()
         self._wk.start()
 
-    _WIN_TRIGGERS = ("windows", "cmd", "cmd.exe", "powershell", "pwsh", "win")
-    _MAC_TRIGGERS = ("macos", "mac", "darwin")
-    _LIN_TRIGGERS = ("linux", "arch", "archlinux")
-
-    def _switch_os(self, target, shell=None):
-        self._st.switch(target)
-        if shell:
-            self._st.shell = shell
-        self._msgs = []
-        self.clear()
-        boot = _make_boot(self._st.os, target)
-        self._otc(boot)
-        self._pr = self._st.prompt()
-        if target == "windows" and self._st.shell == "powershell":
-            self._pr = "PS " + self._st.prompt()
-        self._np()
 
     def _handle_color_cmd(self, arg):
         arg = arg.strip().lower()
@@ -872,6 +809,11 @@ class _Term(QPlainTextEdit):
                 QScrollBar:horizontal {{ width: 0px; height: 0px; background: transparent; }}
             """)
 
+    def _get_sys_prompt(self):
+        if hasattr(self, '_sys_override') and self._sys_override:
+            return self._sys_override
+        return _SYS
+
     def _hc(self, cmd):
         if not cmd:
             self._np(); return
@@ -886,6 +828,7 @@ class _Term(QPlainTextEdit):
             self._cc = _TC
             self._bg_cc = "#000000"
             self._waiting_input = False
+            self._sys_override = None
             self.setStyleSheet("""
                 QPlainTextEdit {
                     background-color: #000000;
@@ -901,7 +844,7 @@ class _Term(QPlainTextEdit):
                 QScrollBar:horizontal { width: 0px; height: 0px; background: transparent; }
             """)
             self.clear()
-            self._otc(_BOOT_DEFAULT)
+            self._otc(_BOOT)
             self._pr = self._st.prompt()
             self._np()
             return
@@ -931,8 +874,12 @@ class _Term(QPlainTextEdit):
             self.clear()
             if os_name:
                 self._st.switch_custom(os_name)
-                boot = _make_boot(os_name, self._st.plat)
-                self._otc(boot)
+                self._sys_override = _SYS.replace(
+                    "You are a raw TTY/console emulator for a virtual machine.",
+                    f"You are a raw TTY/console emulator for a virtual machine running {os_name}. The OS is ALWAYS {os_name}, never switch to any other OS unless the user explicitly runs >zae osinstall."
+                )
+                self._otc(_BOOT)
+                self._ic(f"<<color:#55ff55>>OS set: {os_name}<<color:reset>>\n", "#55ff55")
                 self._pr = self._st.prompt()
                 if self._st.plat == "windows" and self._st.shell == "powershell":
                     self._pr = "PS " + self._st.prompt()
@@ -942,7 +889,11 @@ class _Term(QPlainTextEdit):
                 self._st.shell = "bash"
                 self._st.hn = "custom"
                 self._st.cd = "/root"
-                self._otc("<<clear:zae_term>>")
+                self._sys_override = _SYS.replace(
+                    "You are a raw TTY/console emulator for a virtual machine.",
+                    "You are a raw TTY/console emulator for a custom OS being built from scratch. The user is assembling kernel and components manually."
+                )
+                self._otc(_BOOT)
                 self._ic("ZAE: Custom OS mode. Build your kernel and components from scratch.\n", "#ffff55")
                 self._pr = self._st.prompt()
             self._np()
@@ -959,19 +910,6 @@ class _Term(QPlainTextEdit):
 
         _lc = cmd.strip().lower()
 
-        if _lc in self._WIN_TRIGGERS:
-            shell = "powershell" if _lc in ("powershell", "pwsh") else "cmd"
-            if not (self._st.plat == "windows" and self._st.shell == shell):
-                self._switch_os("windows", shell); return
-        elif _lc in self._MAC_TRIGGERS:
-            if self._st.plat != "macos":
-                self._switch_os("macos"); return
-        elif _lc in self._LIN_TRIGGERS:
-            if self._st.plat != "linux":
-                self._switch_os("linux"); return
-        elif self._st.plat != "linux" and _lc in ("exit", "logoff", "logout"):
-            self._switch_os("linux"); return
-
         if self._st.plat == "windows" and _lc.startswith("color "):
             self._handle_color_cmd(_lc[6:])
             self._np(); return
@@ -979,18 +917,10 @@ class _Term(QPlainTextEdit):
         self._st.upd(cmd)
         self._pr = self._st.prompt()
 
-        if cmd == "clear" or (self._st.plat == "windows" and _lc == "cls"):
+        if _lc == "clear" or (self._st.plat == "windows" and _lc == "cls"):
             self.clear(); self._np(); return
-        elif cmd in ("exit", "poweroff", "shutdown now"):
+        elif _lc in ("exit", "poweroff", "shutdown now"):
             self.close(); return
-        elif cmd == "reboot":
-            self._msgs = []
-            self.clear()
-            boot = _make_boot(self._st.os, self._st.plat)
-            self._otc(boot)
-            self._pr = self._st.prompt()
-            self._np()
-            return
 
         if not self._k:
             if cmd.startswith("gsk_"):
@@ -1004,7 +934,7 @@ class _Term(QPlainTextEdit):
 
         self._busy = True; self.setReadOnly(True)
         self._msgs.append({"role": "user", "content": cmd})
-        sc = _SYS + "\n" + self._st.hdr()
+        sc = self._get_sys_prompt() + "\n" + self._st.hdr()
         pm = [{"role": "system", "content": sc}]
         tail = self._msgs[-6:]
         for m in tail:

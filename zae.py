@@ -55,6 +55,86 @@ _SKIP = ("whisper", "guard", "embed", "vision", "tool", "tts", "image",
 
 _mi = 0
 
+_CMD_COLORS = {
+    "0": "#000000", "1": "#000080", "2": "#008000", "3": "#008080",
+    "4": "#800000", "5": "#800080", "6": "#808000", "7": "#c0c0c0",
+    "8": "#808080", "9": "#5555ff", "a": "#55ff55", "b": "#55ffff",
+    "c": "#ff5555", "d": "#ff55ff", "e": "#ffff55", "f": "#ffffff",
+}
+
+_ANSI_FG = {
+    30: "#000000", 31: "#ff5555", 32: "#50fa7b", 33: "#f1fa8c",
+    34: "#bd93f9", 35: "#ff79c6", 36: "#8be9fd", 37: "#f8f8f2",
+    39: _TC,
+    90: "#6272a4", 91: "#ff6e6e", 92: "#77dd77", 93: "#ffffa5",
+    94: "#d6acff", 95: "#ff92df", 96: "#a4ffff", 97: "#ffffff",
+}
+
+_ANSI_BG = {
+    40: "#000000", 41: "#800000", 42: "#008000", 43: "#808000",
+    44: "#000080", 45: "#800080", 46: "#008080", 47: "#c0c0c0",
+    49: "#000000",
+    100: "#6272a4", 101: "#ff6e6e", 102: "#77dd77", 103: "#ffffa5",
+    104: "#d6acff", 105: "#ff92df", 106: "#a4ffff", 107: "#ffffff",
+}
+
+def _256_to_hex(n):
+    if n < 8:
+        return ["#000000", "#cc0000", "#4e9a06", "#c4a000", "#3465a4", "#75507b", "#06989a", "#d3d7cf"][n]
+    elif n < 16:
+        return ["#555753", "#ef2929", "#8ae234", "#fce94f", "#729fcf", "#ad7fa8", "#34e2e2", "#eeeeec"][n - 8]
+    elif n < 232:
+        n -= 16
+        r = (n // 36)
+        g = (n % 36) // 6
+        b = n % 6
+        r = 0 if r == 0 else 55 + r * 40
+        g = 0 if g == 0 else 55 + g * 40
+        b = 0 if b == 0 else 55 + b * 40
+        return f"#{r:02x}{g:02x}{b:02x}"
+    elif n < 256:
+        gray = 8 + (n - 232) * 10
+        return f"#{gray:02x}{gray:02x}{gray:02x}"
+    return _TC
+
+def tags_to_ansi(txt):
+    if not txt:
+        return ""
+    def _sub_color(m):
+        tag = m.group(1).lower()
+        val = m.group(2).strip().lower()
+        if tag == "color":
+            if val == "reset":
+                return "\033[0m"
+            if val.startswith("#"):
+                h = val[1:]
+                if len(h) == 3:
+                    h = "".join(c * 2 for c in h)
+                if len(h) == 6:
+                    try:
+                        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+                        return f"\033[38;2;{r};{g};{b}m"
+                    except ValueError:
+                        pass
+        elif tag == "bgcolor":
+            if val == "reset":
+                return "\033[49m"
+            if val.startswith("#"):
+                h = val[1:]
+                if len(h) == 3:
+                    h = "".join(c * 2 for c in h)
+                if len(h) == 6:
+                    try:
+                        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+                        return f"\033[48;2;{r};{g};{b}m"
+                    except ValueError:
+                        pass
+        return m.group(0)
+
+    res = re.sub(r'<{1,2}(color|bgcolor):([^<>]+)>{1,2}', _sub_color, txt, flags=re.IGNORECASE)
+    res = re.sub(r'<{1,2}clear:zae_term>{1,2}', '\033[2J\033[H', res, flags=re.IGNORECASE)
+    return res
+
 def _lk():
     e = os.environ.get("GROQ_API_KEY", "").strip()
     if e: return e
@@ -257,80 +337,75 @@ CRITICAL - OUTPUT LENGTH CONTROL:
 - NEVER repeat the same pattern of lines. If you notice yourself outputting similar lines, STOP IMMEDIATELY.
 
 INTERACTIVE COMMANDS:
-- When a command would ask the user for input (y/n, selection, password, etc.), output the prompt text and end your response with the tag <<request>> on its own line. The app will then let the user type an answer and send it back to you as the next message. You must then continue the command's output based on that answer.
+- When a command would ask the user for input (y/n, selection, password, etc.), output the prompt text and end your response with the tag <request> on its own line. The app will then let the user type an answer and send it back to you as the next message. You must then continue the command's output based on that answer.
 - Example flow for "pacman -S firefox":
-  Your output: "resolving dependencies...\nlooking for conflicting packages...\n\nPackages (1) firefox-128.0-1\n\nTotal Download Size:   73.45 MiB\nTotal Installed Size:  241.22 MiB\n\n:: Proceed with installation? [Y/n] <<request>>"
+  Your output: "resolving dependencies...\nlooking for conflicting packages...\n\nPackages (1) firefox-128.0-1\n\nTotal Download Size:   73.45 MiB\nTotal Installed Size:  241.22 MiB\n\n:: Proceed with installation? [Y/n] <request>"
   User sends: "y"
   Your next output: "(1/1) downloading firefox-128.0-1...   100%\n(1/1) installing firefox...              100%\n:: Running post-transaction hooks...\n(1/2) Updating icon theme caches...\n(2/2) Updating the desktop file MIME type cache..."
 
-COLOR COMMAND EMULATION:
-- Windows `color XY`: X=background digit, Y=foreground digit. This is a SILENT command (no stdout). You must emit the appropriate tags to change terminal colors. Use <<bgcolor:#HEX>> for background and <<color:#HEX>> for foreground.
-  Hex map: 0=#000000, 1=#000080, 2=#008000, 3=#008080, 4=#800000, 5=#800080, 6=#808000, 7=#c0c0c0, 8=#808080, 9=#0000ff, a=#00ff00, b=#00ffff, c=#ff0000, d=#ff00ff, e=#ffff00, f=#ffffff.
-  Example: user types "color 0a" -> you output: <<bgcolor:#000000>><<color:#00ff00>>
-  Example: user types "color 0a & echo hello" -> you output: <<bgcolor:#000000>><<color:#00ff00>>hello
-  Example: user types "color 1f" -> you output: <<bgcolor:#000080>><<color:#ffffff>>
-- Bash ANSI escape sequences (\e[31m, \033[1;32m, etc.): emit them naturally as a real terminal would.
+COLOR COMMAND EMULATION AND FORMAT RULES:
+1. Supported color formats:
+   - Tag syntax: <color:#HEX>...<color:reset> for foreground and <bgcolor:#HEX>...<bgcolor:reset> for background.
+   - Or standard ANSI escape codes: \033[38;2;R;G;Bm (RGB foreground), \033[48;2;R;G;Bm (RGB background), \033[92m (light green), \033[0m (reset).
+2. Windows `color XY`: X=background digit, Y=foreground digit. This is a SILENT command in CMD (produces no stdout text). You must emit the appropriate tags to change terminal colors.
+   Hex map: 0=#000000, 1=#000080, 2=#008000, 3=#008080, 4=#800000, 5=#800080, 6=#808000, 7=#c0c0c0, 8=#808080, 9=#5555ff, a=#55ff55, b=#55ffff, c=#ff5555, d=#ff55ff, e=#ffff55, f=#ffffff.
+   Notice digit 'a' is bright light-green (#55ff55).
+   Example: user types "color 0a" -> you output: <bgcolor:#000000><color:#55ff55>
+   Example: user types "color 0a & echo I'm green" -> you output: <bgcolor:#000000><color:#55ff55>I'm green
+   Example: user types "color 1f" -> you output: <bgcolor:#000080><color:#ffffff>
+3. Never wrap output in markdown code blocks (no ```bash, no ```text). Output raw terminal text.
 
 FASTFETCH / NEOFETCH:
-When the command is `fastfetch` or `neofetch`, produce a side-by-side ASCII logo + system info block. Use the correct ASCII art for the CURRENT OS. Keep it compact (15-20 lines). Example formats:
-
-For Arch Linux:
-<<color:#1793d1>>                  -`
-                 .o+`
-                `ooo/               <<color:reset>>root@archiso
-               `+oooo:              <<color:reset>>-----------
-              `+oooooo:             <<color:#1793d1>>OS<<color:reset>>: Arch Linux x86_64
-              -+oooooo+:            <<color:#1793d1>>Host<<color:reset>>: QEMU Virtual Machine
-            `/:-:++oooo+:           <<color:#1793d1>>Kernel<<color:reset>>: 6.10.8-arch1
-           `/++++/+++++++:          <<color:#1793d1>>Uptime<<color:reset>>: 3 mins
-          `/++++++++++++++:         <<color:#1793d1>>Shell<<color:reset>>: bash 5.2.32
-         `/+++ooooooooooooo/`       <<color:#1793d1>>Terminal<<color:reset>>: /dev/tty1
-        ./ooosssso++osssssso+`      <<color:#1793d1>>CPU<<color:reset>>: AMD EPYC 7763 (4) @ 2.45 GHz
-       .oossssso-````/ossssss+`     <<color:#1793d1>>Memory<<color:reset>>: 247 MiB / 16384 MiB
-      -osssssso.      :ssssssso.    <<color:#1793d1>>Disk<<color:reset>>: 4.2 GiB / 64.0 GiB
-     :osssssss/        osssso+++.
-    /ossssssss/        +ssssooo/-
-  `/ossssso+/:-        -:/+osssso+-
- `+sso+:-`                 `.-/+oso:
-`++:.                           `-/+/
-.`                                  `/
-
-For Ubuntu:
-<<color:#e95420>>          _
-      ---(_)
-  _/  ---  \           <<color:reset>>root@ubuntu
- (_) |   |             <<color:reset>>-----------
-   \  --- _/           <<color:#e95420>>OS<<color:reset>>: Ubuntu 24.04 LTS x86_64
-      ---(_)           <<color:#e95420>>Kernel<<color:reset>>: 6.8.0-41-generic
-                       <<color:#e95420>>Uptime<<color:reset>>: 5 mins
-                       <<color:#e95420>>Shell<<color:reset>>: bash 5.2.21
-                       <<color:#e95420>>CPU<<color:reset>>: AMD EPYC 7763 (4) @ 2.45 GHz
-                       <<color:#e95420>>Memory<<color:reset>>: 312 MiB / 16384 MiB
+When the command is `fastfetch` or `neofetch`, produce a side-by-side ASCII logo + system info block. Use the correct ASCII art for the CURRENT OS.
+CRITICAL: Output must be TWO PARALLEL COLUMNS on EVERY line. The ASCII art is on the left, padded to a uniform width, followed by 3 spaces, then the system information line.
+NEVER output the logo first with information dropping below it.
 
 For Windows 10/11:
-<<color:#0078d4>>████████  ████████<<color:reset>>   root@DESKTOP-ZAE
-<<color:#0078d4>>████████  ████████<<color:reset>>   ------------------
-<<color:#0078d4>>████████  ████████<<color:reset>>   <<color:#0078d4>>OS<<color:reset>>: Windows 11 Pro 23H2
-<<color:#0078d4>>                  <<color:reset>>   <<color:#0078d4>>Host<<color:reset>>: Virtual Machine
-<<color:#0078d4>>████████  ████████<<color:reset>>   <<color:#0078d4>>Kernel<<color:reset>>: 10.0.22631
-<<color:#0078d4>>████████  ████████<<color:reset>>   <<color:#0078d4>>Uptime<<color:reset>>: 2 mins
-<<color:#0078d4>>████████  ████████<<color:reset>>   <<color:#0078d4>>Shell<<color:reset>>: cmd
-<<color:#0078d4>>████████  ████████<<color:reset>>   <<color:#0078d4>>CPU<<color:reset>>: AMD EPYC 7763 (4) @ 2.45 GHz
-                     <<color:#0078d4>>Memory<<color:reset>>: 1024 MiB / 16384 MiB
+<color:#0078d4>████████   ████████<color:reset>   root@DESKTOP-ZAE
+<color:#0078d4>████████   ████████<color:reset>   ----------------
+<color:#0078d4>████████   ████████<color:reset>   <color:#0078d4>OS<color:reset>: Windows 11 Pro 23H2 x86_64
+<color:#0078d4>████████   ████████<color:reset>   <color:#0078d4>Host<color:reset>: Virtual Machine
+<color:#0078d4>                   <color:reset>   <color:#0078d4>Kernel<color:reset>: 10.0.22631
+<color:#0078d4>████████   ████████<color:reset>   <color:#0078d4>Uptime<color:reset>: 2 mins
+<color:#0078d4>████████   ████████<color:reset>   <color:#0078d4>Shell<color:reset>: cmd
+<color:#0078d4>████████   ████████<color:reset>   <color:#0078d4>CPU<color:reset>: AMD EPYC 7763 (4) @ 2.45 GHz
+<color:#0078d4>████████   ████████<color:reset>   <color:#0078d4>Memory<color:reset>: 1024 MiB / 16384 MiB
 
-Tags you may use: <<color:#HEX>> <<color:reset>> <<bgcolor:#HEX>> <<bgcolor:reset>> <<timeout:X>> <<clear:zae_term>> <<request>>. Always close tags properly."""
+For Arch Linux:
+<color:#1793d1>         /\          <color:reset>   root@archiso
+<color:#1793d1>        /  \         <color:reset>   ------------
+<color:#1793d1>       /\   \        <color:reset>   <color:#1793d1>OS<color:reset>: Arch Linux x86_64
+<color:#1793d1>      /      \       <color:reset>   <color:#1793d1>Host<color:reset>: QEMU Virtual Machine
+<color:#1793d1>     /   ,,   \      <color:reset>   <color:#1793d1>Kernel<color:reset>: 6.10.8-arch1
+<color:#1793d1>    /   |  |  -\     <color:reset>   <color:#1793d1>Uptime<color:reset>: 3 mins
+<color:#1793d1>   /_-''    ''-_\    <color:reset>   <color:#1793d1>Shell<color:reset>: bash 5.2.32
+<color:#1793d1>  (____      ____)   <color:reset>   <color:#1793d1>CPU<color:reset>: AMD EPYC 7763 (4) @ 2.45 GHz
+<color:#1793d1>       `----'        <color:reset>   <color:#1793d1>Memory<color:reset>: 247 MiB / 16384 MiB
+
+For Ubuntu:
+<color:#e95420>          _          <color:reset>   root@ubuntu
+<color:#e95420>      ---(_)         <color:reset>   -----------
+<color:#e95420>  _/  ---  \         <color:reset>   <color:#e95420>OS<color:reset>: Ubuntu 24.04 LTS x86_64
+<color:#e95420> (_) |   |           <color:reset>   <color:#e95420>Host<color:reset>: Virtual Machine
+<color:#e95420>   \  --- _/         <color:reset>   <color:#e95420>Kernel<color:reset>: 6.8.0-41-generic
+<color:#e95420>      ---(_)         <color:reset>   <color:#e95420>Uptime<color:reset>: 5 mins
+<color:#e95420>                     <color:reset>   <color:#e95420>Shell<color:reset>: bash 5.2.21
+<color:#e95420>                     <color:reset>   <color:#e95420>CPU<color:reset>: AMD EPYC 7763 (4) @ 2.45 GHz
+<color:#e95420>                     <color:reset>   <color:#e95420>Memory<color:reset>: 312 MiB / 16384 MiB
+
+Tags: <color:#HEX> <color:reset> <bgcolor:#HEX> <bgcolor:reset> <timeout:X> <clear:zae_term> <request>."""
 
 
-_BOOT = r"""<<clear:zae_term>>
-<<color:#ff1744>>███████╗ <<color:#ff9100>>█████╗  <<color:#ffea00>>███████╗
-<<color:#ff007f>>╚══███╔╝<<color:#ffab00>>██╔══██╗<<color:#ffff00>>██╔════╝
-<<color:#d500f9>>  ███╔╝ <<color:#00e676>>███████║<<color:#00e5ff>>█████╗
-<<color:#aa00ff>> ███╔╝  <<color:#00c853>>██╔══██║<<color:#00b0ff>>██╔══╝
-<<color:#651fff>>███████╗<<color:#1de9b6>>██║  ██║<<color:#2979ff>>███████╗
-<<color:#3d5afe>>╚══════╝<<color:#00bfa5>>╚═╝  ╚═╝<<color:#304ffe>>╚══════╝<<color:reset>>
+_BOOT = r"""<clear:zae_term>
+<color:#ff1744>███████╗ <color:#ff9100>█████╗  <color:#ffea00>███████╗
+<color:#ff007f>╚══███╔╝<color:#ffab00>>██╔══██╗<color:#ffff00>██╔════╝
+<color:#d500f9>  ███╔╝ <color:#00e676>███████║<color:#00e5ff>█████╗
+<color:#aa00ff> ███╔╝  <color:#00c853>██╔══██║<color:#00b0ff>██╔══╝
+<color:#651fff>███████╗<color:#1de9b6>██║  ██║<color:#2979ff>███████╗
+<color:#3d5afe>╚══════╝<color:#00bfa5>╚═╝  ╚═╝<color:#304ffe>╚══════╝<color:reset>
 
-<<color:#ff007f>>:3<<color:reset>> <<color:#6272a4>>a virtual machine that can run any OS. v3. Powered by Groq. github: @rootlesszen<<color:reset>>
-<<timeout:0.18>>
+<color:#ff007f>:3<color:reset> <color:#6272a4>a virtual machine that can run any OS. v3. Powered by Groq. github: @rootlesszen<color:reset>
+<timeout:0.18>
 Press F11 for Fullscreen, Esc to exit.
 """
 
@@ -393,7 +468,6 @@ class _W_Thread(QThread):
                 _looped = False
                 _line_buf = ""
                 _line_count = 0
-                _has_request = False
                 self.stat.emit("waiting")
                 with urllib.request.urlopen(rq, timeout=15) as rsp:
                     for rl in rsp:
@@ -407,15 +481,16 @@ class _W_Thread(QThread):
                             delta = c.get("choices", [{}])[0].get("delta", {})
                             dt = delta.get("content", "") or delta.get("reasoning_content", "") or delta.get("reasoning", "") or ""
                             if dt:
-                                if "<<request>>" in (_line_buf + dt):
-                                    pre = (_line_buf + dt).split("<<request>>")[0]
+                                combined = _line_buf + dt
+                                if "<request>" in combined or "<<request>>" in combined:
+                                    tag = "<<request>>" if "<<request>>" in combined else "<request>"
+                                    pre = combined.split(tag)[0]
                                     if pre:
                                         remaining = pre[len(_line_buf):]
                                         if remaining:
                                             ft.append(remaining)
                                             self.chunk.emit(remaining)
-                                    _has_request = True
-                                    ft.append("<<request>>")
+                                    ft.append("<request>")
                                     _line_buf = ""
                                     break
                                 ft.append(dt)
@@ -455,10 +530,10 @@ class _W_Thread(QThread):
                 if self._stop: return
                 lec = e.code
                 if e.code == 401:
-                    self.chunk.emit("<<color:#ff5555>>groq: api key invalid<<color:reset>>\n")
+                    self.chunk.emit("<color:#ff5555>groq: api key invalid<color:reset>\n")
                     self.done.emit(""); return
                 elif e.code == 403:
-                    self.chunk.emit("<<color:#ff5555>>groq: 403 forbidden. enable VPN or check key<<color:reset>>\n")
+                    self.chunk.emit("<color:#ff5555>groq: 403 forbidden. enable VPN or check key<color:reset>\n")
                     self.done.emit(""); return
                 rt = e.headers.get('x-ratelimit-reset-tokens') or e.headers.get('x-ratelimit-reset-requests') or e.headers.get('retry-after')
                 if rt:
@@ -476,7 +551,7 @@ class _W_Thread(QThread):
                     if rate_hit_count >= 2:
                         secs = re.search(r'(\d+)', str(wt))
                         sw = secs.group(1) if secs else wt
-                        self.chunk.emit(f"<<color:#808080>>rate limit for ~{sw}s.<<color:reset>>\n")
+                        self.chunk.emit(f"<color:#808080>rate limit for ~{sw}s.<color:reset>\n")
                         self.done.emit(""); return
                     self.stat.emit("rate limited, switching...")
                     time.sleep(0.3)
@@ -491,11 +566,11 @@ class _W_Thread(QThread):
             if lec == 429:
                 secs = re.search(r'(\d+)', str(wt))
                 sw = secs.group(1) if secs else wt
-                self.chunk.emit(f"<<color:#808080>>rate limit for ~{sw}s.<<color:reset>>\n")
+                self.chunk.emit(f"<color:#808080>rate limit for ~{sw}s.<color:reset>\n")
             elif lec == 400:
-                self.chunk.emit("<<color:#ff5555>>groq: context full. type 'clear'<<color:reset>>\n")
+                self.chunk.emit("<color:#ff5555>groq: context full. type 'clear'<color:reset>\n")
             elif lec:
-                self.chunk.emit(f"<<color:#ff5555>>groq: error {lec}<<color:reset>>\n")
+                self.chunk.emit(f"<color:#ff5555>groq: error {lec}<color:reset>\n")
             self.done.emit("")
 
 
@@ -513,20 +588,9 @@ class _Term(QPlainTextEdit):
         self._models = _gm(self._k)
         self.setFont(_gf(12))
         self.setCursorWidth(9)
-        self.setStyleSheet("""
-            QPlainTextEdit {
-                background-color: #000000;
-                color: #b0b0b0;
-                selection-background-color: #2e3440;
-                selection-color: #ffffff;
-                border: none;
-                padding: 4px;
-                margin: 0px;
-                line-height: 1.22;
-            }
-            QScrollBar:vertical { width: 0px; height: 0px; background: transparent; }
-            QScrollBar:horizontal { width: 0px; height: 0px; background: transparent; }
-        """)
+        self._cc = _TC
+        self._bg_cc = "#000000"
+        self._update_style()
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._st = _St()
@@ -534,8 +598,6 @@ class _Term(QPlainTextEdit):
         self._pr = "root@archiso ~ # "
         self._pp = 0
         self._busy = False
-        self._cc = _TC
-        self._bg_cc = "#000000"
         self._sb = ""
         self._hist = []; self._hi = 0
         self._lm = "None"; self._lr = "None"
@@ -554,6 +616,22 @@ class _Term(QPlainTextEdit):
         self._sys_override = None
         self._otc(_BOOT)
         self._np()
+
+    def _update_style(self):
+        self.setStyleSheet(f"""
+            QPlainTextEdit {{
+                background-color: {self._bg_cc};
+                color: {self._cc};
+                selection-background-color: #2e3440;
+                selection-color: #ffffff;
+                border: none;
+                padding: 4px;
+                margin: 0px;
+                line-height: 1.22;
+            }}
+            QScrollBar:vertical {{ width: 0px; height: 0px; background: transparent; }}
+            QScrollBar:horizontal {{ width: 0px; height: 0px; background: transparent; }}
+        """)
 
     def mousePressEvent(self, e):
         if not _W and e.button() == Qt.MouseButton.LeftButton and e.position().y() < 30:
@@ -608,18 +686,98 @@ class _Term(QPlainTextEdit):
             c.movePosition(QTextCursor.MoveOperation.End, QTextCursor.MoveMode.KeepAnchor)
             c.removeSelectedText()
 
-    def _ic(self, txt, clr):
+    def _raw_insert(self, txt, clr):
+        if not txt:
+            return
         c = self.textCursor()
         c.movePosition(QTextCursor.MoveOperation.End)
-        fmt = QTextCharFormat(); fmt.setForeground(QColor(clr))
-        c.insertText(txt, fmt); self.setTextCursor(c)
+        fmt = QTextCharFormat()
+        fmt.setForeground(QColor(clr))
+        c.insertText(txt, fmt)
+        self.setTextCursor(c)
         self.ensureCursorVisible()
+
+    def _parse_and_insert(self, txt, default_color=None):
+        if not txt:
+            return
+        if default_color:
+            self._cc = default_color
+
+        for tm in re.finditer(r'<{1,2}timeout:([\d\.]+)>{1,2}', txt, re.IGNORECASE):
+            try:
+                ms = int(float(tm.group(1)) * 1000)
+                if ms > 0:
+                    lp = QEventLoop()
+                    QTimer.singleShot(min(ms, 1000), lp.quit)
+                    lp.exec()
+            except Exception:
+                pass
+        txt = re.sub(r'<{1,2}timeout:[\d\.]+>{1,2}', '', txt, flags=re.IGNORECASE)
+
+        txt = tags_to_ansi(txt)
+        txt = re.sub(r'<{1,2}request>{1,2}', '', txt)
+
+        ansi_re = re.compile(r'(?:\x1b|\033|\\e)\[([0-9;]*)([a-zA-Z])')
+        last_idx = 0
+        for m in ansi_re.finditer(txt):
+            plain = txt[last_idx:m.start()]
+            if plain:
+                self._raw_insert(plain, self._cc)
+            last_idx = m.end()
+
+            params_str, cmd = m.group(1), m.group(2)
+            if cmd == 'm':
+                codes = [int(x) for x in params_str.split(';') if x.isdigit()]
+                if not codes:
+                    codes = [0]
+                i = 0
+                while i < len(codes):
+                    c = codes[i]
+                    if c == 0:
+                        self._cc = _TC
+                    elif c in _ANSI_FG:
+                        self._cc = _ANSI_FG[c]
+                    elif c in _ANSI_BG:
+                        self._bg_cc = _ANSI_BG[c]
+                        self._update_style()
+                    elif c == 38 and i + 4 < len(codes) and codes[i+1] == 2:
+                        r, g, b = codes[i+2], codes[i+3], codes[i+4]
+                        self._cc = f"#{r:02x}{g:02x}{b:02x}"
+                        i += 4
+                    elif c == 48 and i + 4 < len(codes) and codes[i+1] == 2:
+                        r, g, b = codes[i+2], codes[i+3], codes[i+4]
+                        self._bg_cc = f"#{r:02x}{g:02x}{b:02x}"
+                        self._update_style()
+                        i += 4
+                    elif c == 38 and i + 2 < len(codes) and codes[i+1] == 5:
+                        self._cc = _256_to_hex(codes[i+2])
+                        i += 2
+                    elif c == 48 and i + 2 < len(codes) and codes[i+1] == 5:
+                        self._bg_cc = _256_to_hex(codes[i+2])
+                        self._update_style()
+                        i += 2
+                    i += 1
+            elif cmd in ('J', 'H'):
+                self.clear()
+                self._pp = 0
+
+        rem = txt[last_idx:]
+        if rem:
+            self._raw_insert(rem, self._cc)
+
+    def _ic(self, txt, clr=None):
+        if not txt:
+            return
+        if "<" in txt or "\033" in txt or "\x1b" in txt or "\\e[" in txt:
+            self._parse_and_insert(txt, clr)
+        else:
+            self._raw_insert(txt, clr or self._cc)
 
     def _np(self):
         c = self.textCursor(); c.movePosition(QTextCursor.MoveOperation.End)
         fmt = QTextCharFormat(); fmt.setForeground(QColor("#ffffff"))
         c.insertText(self._pr, fmt)
-        tf = QTextCharFormat(); tf.setForeground(QColor(_TC))
+        tf = QTextCharFormat(); tf.setForeground(QColor(self._cc))
         self.setCurrentCharFormat(tf)
         self.setTextCursor(c); self._pp = self.textCursor().position()
         self.ensureCursorVisible()
@@ -628,16 +786,16 @@ class _Term(QPlainTextEdit):
         self._xs()
         if hasattr(self, '_wk') and self._wk.isRunning():
             self._wk.cancel(); self._wk.terminate(); self._wk.wait(100)
-        self._sb = ""; self._cc = _TC
+        self._sb = ""
         self._busy = False; self._waiting_input = False
         self.setReadOnly(False)
-        self._ic("^C\n", _TC); self._np()
+        self._raw_insert("^C\n", self._cc); self._np()
 
     def _ri(self, txt):
         c = self.textCursor(); c.setPosition(self._pp)
         c.movePosition(QTextCursor.MoveOperation.End, QTextCursor.MoveMode.KeepAnchor)
         c.removeSelectedText()
-        fmt = QTextCharFormat(); fmt.setForeground(QColor(_TC))
+        fmt = QTextCharFormat(); fmt.setForeground(QColor(self._cc))
         c.insertText(txt, fmt); self.setTextCursor(c)
 
     def _draw_model_menu(self):
@@ -647,24 +805,24 @@ class _Term(QPlainTextEdit):
         c.removeSelectedText()
         self.setTextCursor(c)
         bar = "═" * 52
-        self._ic(f"╔{bar}╗\n", "#4444aa")
-        self._ic(f"║{'ZAE MODEL SELECTOR':^52}║\n", "#4444aa")
-        self._ic(f"╠{bar}╣\n", "#4444aa")
+        self._raw_insert(f"╔{bar}╗\n", "#4444aa")
+        self._raw_insert(f"║{'ZAE MODEL SELECTOR':^52}║\n", "#4444aa")
+        self._raw_insert(f"╠{bar}╣\n", "#4444aa")
         for i, m in enumerate(self._models):
             name = m[:46]
             if i == self._model_menu_idx:
                 line = f" ► {name:<47} "
-                self._ic("║", "#4444aa")
-                self._ic(line, "#ff5555")
-                self._ic("║\n", "#4444aa")
+                self._raw_insert("║", "#4444aa")
+                self._raw_insert(line, "#ff5555")
+                self._raw_insert("║\n", "#4444aa")
             else:
                 line = f"   {name:<47} "
-                self._ic("║", "#4444aa")
-                self._ic(line, "#808080")
-                self._ic("║\n", "#4444aa")
-        self._ic(f"╠{bar}╣\n", "#4444aa")
-        self._ic(f"║{'↑/↓ Navigate   Enter: Select   Esc: Cancel':^52}║\n", "#555555")
-        self._ic(f"╚{bar}╝\n", "#4444aa")
+                self._raw_insert("║", "#4444aa")
+                self._raw_insert(line, "#808080")
+                self._raw_insert("║\n", "#4444aa")
+        self._raw_insert(f"╠{bar}╣\n", "#4444aa")
+        self._raw_insert(f"║{'↑/↓ Navigate   Enter: Select   Esc: Cancel':^52}║\n", "#555555")
+        self._raw_insert(f"╚{bar}╝\n", "#4444aa")
 
     def keyPressEvent(self, e):
         if self._model_menu_active:
@@ -749,7 +907,7 @@ class _Term(QPlainTextEdit):
             c.movePosition(QTextCursor.MoveOperation.End)
             self.setTextCursor(c)
             cmd = self.toPlainText()[self._pp:].strip()
-            fmt = QTextCharFormat(); fmt.setForeground(QColor(_TC))
+            fmt = QTextCharFormat(); fmt.setForeground(QColor(self._cc))
             c.insertText("\n", fmt); self.setTextCursor(c)
             if self._waiting_input:
                 self._handle_interactive_input(cmd)
@@ -780,7 +938,6 @@ class _Term(QPlainTextEdit):
         self._ss()
         self._wk.start()
 
-
     def _get_sys_prompt(self):
         if hasattr(self, '_sys_override') and self._sys_override:
             return self._sys_override
@@ -801,20 +958,7 @@ class _Term(QPlainTextEdit):
             self._bg_cc = "#000000"
             self._waiting_input = False
             self._sys_override = None
-            self.setStyleSheet("""
-                QPlainTextEdit {
-                    background-color: #000000;
-                    color: #b0b0b0;
-                    selection-background-color: #2e3440;
-                    selection-color: #ffffff;
-                    border: none;
-                    padding: 4px;
-                    margin: 0px;
-                    line-height: 1.22;
-                }
-                QScrollBar:vertical { width: 0px; height: 0px; background: transparent; }
-                QScrollBar:horizontal { width: 0px; height: 0px; background: transparent; }
-            """)
+            self._update_style()
             self.clear()
             self._otc(_BOOT)
             self._pr = self._st.prompt()
@@ -829,20 +973,7 @@ class _Term(QPlainTextEdit):
             self._cc = _TC
             self._bg_cc = "#000000"
             self._waiting_input = False
-            self.setStyleSheet("""
-                QPlainTextEdit {
-                    background-color: #000000;
-                    color: #b0b0b0;
-                    selection-background-color: #2e3440;
-                    selection-color: #ffffff;
-                    border: none;
-                    padding: 4px;
-                    margin: 0px;
-                    line-height: 1.22;
-                }
-                QScrollBar:vertical { width: 0px; height: 0px; background: transparent; }
-                QScrollBar:horizontal { width: 0px; height: 0px; background: transparent; }
-            """)
+            self._update_style()
             self.clear()
             if os_name:
                 self._st.switch_custom(os_name)
@@ -882,6 +1013,17 @@ class _Term(QPlainTextEdit):
 
         _lc = cmd.strip().lower()
 
+        if self._st.plat == "windows":
+            cm = re.match(r'^color\s+([0-9a-fA-F])([0-9a-fA-F])$', _lc)
+            if cm:
+                bg_d = cm.group(1)
+                fg_d = cm.group(2)
+                self._bg_cc = _CMD_COLORS.get(bg_d, "#000000")
+                self._cc = _CMD_COLORS.get(fg_d, "#55ff55")
+                self._update_style()
+                self._np()
+                return
+
         self._st.upd(cmd)
         self._pr = self._st.prompt()
 
@@ -911,7 +1053,7 @@ class _Term(QPlainTextEdit):
         _sc = cmd.split()[0] if cmd.split() else ""
         _silent = _sc.lower() in ("cd", "mkdir", "touch", "export", "alias", "unset", "source",
                                    "chmod", "chown", "mv", "cp", "rm",
-                                   "md", "set", "cd.", "attrib", "cd..")
+                                   "md", "set", "cd.", "attrib", "cd..", "color")
         self._spin_status = ""
         self._wk = _W_Thread(self._k, pm, self._models, silent=_silent)
         self._wk.chunk.connect(self._otc)
@@ -936,75 +1078,36 @@ class _Term(QPlainTextEdit):
         ch = ch.replace("```bash", "").replace("```text", "").replace("```", "")
         if not ch: return
         self._sb += ch
-        self._sb = re.sub(r'(?<!\<)\<((?:color|bgcolor|timeout|clear|request)[^<>]*)\>(?!\>)', r'<<\1>>', self._sb)
-        while self._sb:
-            ts = self._sb.find("<<")
-            if ts == -1:
-                self._ic(self._sb, self._cc)
-                self._sb = ""; break
-            if ts > 0:
-                self._ic(self._sb[:ts], self._cc)
-                self._sb = self._sb[ts:]
-                continue
-            te = self._sb.find(">>")
-            if te == -1:
-                if len(self._sb) > 60:
-                    self._ic(self._sb, self._cc)
-                    self._sb = ""
-                break
-            tb = self._sb[2:te].strip()
-            self._sb = self._sb[te+2:]
-            self._at(tb)
 
-    def _at(self, tag):
-        lo = tag.lower()
-        if lo.startswith("color:"):
-            v = lo[6:].strip()
-            if v == "reset": self._cc = _TC
-            elif v.startswith("#"): self._cc = v
-        elif lo.startswith("bgcolor:"):
-            v = lo[8:].strip()
-            if v == "reset":
-                self._bg_cc = "#000000"
-            elif v.startswith("#"):
-                self._bg_cc = v
-            self.setStyleSheet(f"""
-                QPlainTextEdit {{
-                    background-color: {self._bg_cc};
-                    color: {self._cc};
-                    selection-background-color: #2e3440;
-                    selection-color: #ffffff;
-                    border: none;
-                    padding: 4px;
-                    margin: 0px;
-                    line-height: 1.22;
-                }}
-                QScrollBar:vertical {{ width: 0px; height: 0px; background: transparent; }}
-                QScrollBar:horizontal {{ width: 0px; height: 0px; background: transparent; }}
-            """)
-        elif lo == "clear:zae_term":
-            self.clear(); self._pp = 0
-        elif lo == "request":
-            pass
-        elif lo.startswith("timeout"):
-            m = re.search(r'[\d\.]+', lo)
-            if m:
-                ms = int(float(m.group(0)) * 1000)
-                if ms > 0:
-                    lp = QEventLoop(); QTimer.singleShot(min(ms, 1000), lp.quit); lp.exec()
+        to_process = self._sb
+        self._sb = ""
+
+        last_lt = to_process.rfind("<")
+        if last_lt != -1 and ">" not in to_process[last_lt:]:
+            tail = to_process[last_lt:]
+            if len(tail) < 50 and re.match(r'^<{1,2}[a-zA-Z0-9_:#\.\-]*$', tail):
+                self._sb = tail + self._sb
+                to_process = to_process[:last_lt]
+
+        m_esc = re.search(r'(?:\x1b|\033|\\e)(?:\[[0-9;]*)?$', to_process)
+        if m_esc:
+            self._sb = m_esc.group(0) + self._sb
+            to_process = to_process[:m_esc.start()]
+
+        if to_process:
+            self._parse_and_insert(to_process)
 
     def _odf(self, raw):
         self._xs()
         self._lr = raw
         if self._sb:
-            leftover = self._sb
-            if not re.fullmatch(r'<<[^<>]{0,40}', leftover):
-                self._ic(leftover, self._cc)
+            self._parse_and_insert(self._sb)
             self._sb = ""
-        has_request = "<<request>>" in raw
-        clean_raw = raw.replace("<<request>>", "").rstrip()
+
+        has_request = ("<request>" in raw) or ("<<request>>" in raw)
+        clean_raw = re.sub(r'<{1,2}request>{1,2}', '', raw).rstrip()
         if clean_raw and not clean_raw.endswith("\n"):
-            self._ic("\n", _TC)
+            self._raw_insert("\n", self._cc)
         if len(self._msgs) > 30:
             self._msgs = self._msgs[-10:]
         if clean_raw:

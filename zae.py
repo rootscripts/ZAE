@@ -36,19 +36,27 @@ _UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124.0 Safari/53
 _FM = [
     "llama-3.3-70b-versatile",
     "llama-3.1-8b-instant",
+    "llama-3.1-70b-versatile",
+    "llama-3.2-3b-preview",
+    "llama-3.2-1b-preview",
     "llama3-70b-8192",
     "llama3-8b-8192",
     "qwen-2.5-32b",
     "qwen-2.5-coder-32b",
+    "qwen/qwen3-32b",
+    "qwen/qwen3.8-27b",
+    "deepseek-r1-distill-llama-70b",
+    "deepseek-r1-distill-qwen-32b",
+    "mistral-saba-24b",
+    "mistral-small-24b-instruct-2501",
     "mixtral-8x7b-32768",
     "gemma2-9b-it",
     "meta-llama/llama-4-scout-17b-16e-instruct",
-    "qwen/qwen3-32b",
     "openai/gpt-oss-20b",
     "openai/gpt-oss-120b",
 ]
 
-_REASON_MODELS = ("gpt-oss", "qwen3", "qwen-2.5")
+_REASON_MODELS = ("gpt-oss", "qwen3", "qwen-2.5", "deepseek", "r1")
 
 _SKIP = ("whisper", "guard", "embed", "vision", "tool", "tts", "image",
          "compound", "orpheus", "safeguard", "allam")
@@ -77,6 +85,14 @@ _ANSI_BG = {
     100: "#6272a4", 101: "#ff6e6e", 102: "#77dd77", 103: "#ffffa5",
     104: "#d6acff", 105: "#ff92df", 106: "#a4ffff", 107: "#ffffff",
 }
+
+def _compress_for_history(txt):
+    if not txt or not txt.strip():
+        return "[ok]"
+    lines = txt.strip().splitlines()
+    if len(lines) <= 5:
+        return txt.strip()
+    return "\n".join(lines[:2] + ["[...output truncated...]"] + lines[-2:])
 
 def _256_to_hex(n):
     if n < 8:
@@ -483,74 +499,30 @@ class _St:
 
     def hdr(self):
         cf = []
-        for k, v in list(self.fs.items())[-25:]:
-            preview = f'="{v[:100]}"' if v else ""
+        for k, v in list(self.fs.items())[-15:]:
+            preview = f'="{v[:50]}"' if v else ""
             cf.append(f"{k}{preview}")
-        df = list(self.dirs)[-15:]
-        info = [
-            f"PLATFORM={self.plat}",
-            f"OS={self.os}",
-            f"SHELL={self.shell}",
-            f"HOST={self.hn}",
-            f"USER={self.u}",
-            f"CWD={self.cd}"
-        ]
-        if cf:
-            info.append(f"VFS_FILES: {', '.join(cf)}")
-        if df:
-            info.append(f"VFS_DIRS: {', '.join(df)}")
+        df = list(self.dirs)[-10:]
+        info = [f"OS={self.os}", f"CWD={self.cd}"]
+        if cf: info.append(f"VFS_FILES: {', '.join(cf)}")
+        if df: info.append(f"VFS_DIRS: {', '.join(df)}")
         return "[" + " | ".join(info) + "]"
 
 
-_SYS = r"""You are a raw TTY/console emulator for a virtual machine. Output ONLY the exact bytes a real terminal/console would print for the given command. No chat, no markdown, no apologies, no explanations, no commentary.
+_SYS = r"""Raw TTY/console emulator. Output ONLY exact command stdout/stderr bytes. No markdown, no commentary, no prompt (app draws prompt).
 
-HARD RULES:
-1. NEVER print a shell prompt yourself (no "user@host:~$", no "root@archiso ~ #", no "C:\>", no "PS C:\>"). The application draws the prompt. You produce ONLY the command's stdout/stderr for ONE single run.
-2. NEVER invent a generic error for a command that is installed and valid. All standard commands must print correct, plausible output for the current PLATFORM/SHELL.
-3. Never output a bare "$" or shell parsing error unless the user's command is genuinely invalid syntax for the CURRENT SHELL.
-4. Silent commands (cd, mkdir, touch, export, alias, unset, source, chmod, chown, mv, cp, rm on success) = empty output, exactly like a real shell.
-5. All packages/programs the user references are considered already installed and runnable.
-6. Simulate exactly ONE command run. NEVER loop, NEVER repeat the same line/word/phrase, NEVER pad output with filler. Stop as soon as the realistic output ends.
-7. Multi-OS: match PLATFORM's real command set, output, path style (/ vs \), shell exactly.
-8. If user asks to install another OS, simulate a condensed install log, then finish.
-9. When user sends a bare input like "y", "n", "1", "2", "yes", "no", or any short text after a previous command that asked for input: treat it as the ANSWER to the previous interactive prompt. Do NOT treat it as a shell command. Produce the realistic continuation of the previous interactive session as if the user typed that answer at the prompt.
+RULES:
+1. Valid commands must print realistic output. Silent commands (cd, mkdir, touch, rm, del) = empty output.
+2. Short inputs (y/n, 1, 2) continue previous interactive prompts. For input prompts, end with <request>.
+3. Stop immediately when realistic output ends. Never loop/repeat lines. Max 25 output lines.
+4. Colors: <color:#HEX>, <color:reset>, <bgcolor:#HEX>, <bgcolor:reset>, or ANSI \033[...m. CMD `color 0a`: silent, emit <bgcolor:#000000><color:#55ff55>.
 
-CRITICAL CWD TRACKING:
-You must accurately track the Current Working Directory across commands. Whenever the directory changes via 'cd', the resulting shell prompt MUST reflect the new absolute path (e.g. 'cd ..' from C:\Users\root must change prompt to 'C:\Users>'). The application draws the prompt using CWD from header, but all your command outputs, relative path resolutions, and directory listings MUST strictly match the active CWD.
+CRITICAL CWD TRACKING: You must accurately track the Current Working Directory across commands. Whenever the directory changes via 'cd', the resulting shell prompt MUST reflect the new absolute path (e.g. 'cd ..' from C:\Users\root must change prompt to 'C:\Users>'). Relative paths and listings MUST match active CWD.
 
-PERSISTENCE:
-Maintain a persistent virtual filesystem state in memory for the active session. If a file or directory is created with echo, touch, mkdir, or redirected output, it MUST continue to exist in subsequent 'dir', 'ls', and 'type' calls until explicitly deleted. Never reset filesystem state to default during the session. You must reflect all files and directories listed in [VFS_FILES: ...] and [VFS_DIRS: ...] in directory listings whenever the user inspects that directory.
+PERSISTENCE: Maintain a persistent virtual filesystem state in memory for the active session. If a file or directory is created with echo, touch, mkdir, or redirected output, it MUST continue to exist in subsequent 'dir', 'ls', and 'type' calls until explicitly deleted. Never reset filesystem state to default during the session. Reflect all files/dirs from [VFS_FILES: ...] and [VFS_DIRS: ...].
 
-CRITICAL - OUTPUT LENGTH CONTROL:
-- CRITICAL: Never loop identical lines. If command output is huge (like dir /s, ls -R, find /, pacman -Ss, apt list, yay, pip list, tree), output only 30 realistic lines, write '[... truncated ...]' and immediately stop.
-- For `ping`: show 4 packets + statistics, then stop.
-- NEVER repeat the same pattern of lines. If you notice yourself outputting similar lines, STOP IMMEDIATELY.
-
-INTERACTIVE COMMANDS:
-- When a command would ask the user for input (y/n, selection, password, etc.), output the prompt text and end your response with the tag <request> on its own line. The app will then let the user type an answer and send it back to you as the next message. You must then continue the command's output based on that answer.
-- Example flow for "pacman -S firefox":
-  Your output: "resolving dependencies...\nlooking for conflicting packages...\n\nPackages (1) firefox-128.0-1\n\nTotal Download Size:   73.45 MiB\nTotal Installed Size:  241.22 MiB\n\n:: Proceed with installation? [Y/n] <request>"
-  User sends: "y"
-  Your next output: "(1/1) downloading firefox-128.0-1...   100%\n(1/1) installing firefox...              100%\n:: Running post-transaction hooks...\n(1/2) Updating icon theme caches...\n(2/2) Updating the desktop file MIME type cache..."
-
-COLOR COMMAND EMULATION AND FORMAT RULES:
-1. Supported color formats:
-   - Tag syntax: <color:#HEX>...<color:reset> for foreground and <bgcolor:#HEX>...<bgcolor:reset> for background.
-   - Or standard ANSI escape codes: \033[38;2;R;G;Bm (RGB foreground), \033[48;2;R;G;Bm (RGB background), \033[92m (light green), \033[0m (reset).
-2. Windows `color XY`: X=background digit, Y=foreground digit. This is a SILENT command in CMD (produces no stdout text). You must emit the appropriate tags to change terminal colors.
-   Hex map: 0=#000000, 1=#000080, 2=#008000, 3=#008080, 4=#800000, 5=#800080, 6=#808000, 7=#c0c0c0, 8=#808080, 9=#5555ff, a=#55ff55, b=#55ffff, c=#ff5555, d=#ff55ff, e=#ffff55, f=#ffffff.
-   Notice digit 'a' is bright light-green (#55ff55).
-   Example: user types "color 0a" -> you output: <bgcolor:#000000><color:#55ff55>
-   Example: user types "color 0a & echo I'm green" -> you output: <bgcolor:#000000><color:#55ff55>I'm green
-   Example: user types "color 1f" -> you output: <bgcolor:#000080><color:#ffffff>
-3. Never wrap output in markdown code blocks (no ```bash, no ```text). Output raw terminal text.
-
-FASTFETCH / NEOFETCH:
-When the command is `fastfetch` or `neofetch`, produce a side-by-side ASCII logo + system info block. Use the correct ASCII art for the CURRENT OS.
-CRITICAL: Output must be TWO PARALLEL COLUMNS on EVERY line. The ASCII art is on the left, padded to a uniform width, followed by 3 spaces, then the system information line.
-NEVER output the logo first with information dropping below it.
-
-For Windows 10/11:
+FASTFETCH (2 parallel columns side-by-side, art on left, info on right):
+Windows 10/11:
 <color:#0078d4>████████   ████████<color:reset>   root@DESKTOP-ZAE
 <color:#0078d4>████████   ████████<color:reset>   ----------------
 <color:#0078d4>████████   ████████<color:reset>   <color:#0078d4>OS<color:reset>: Windows 11 Pro 23H2 x86_64
@@ -560,8 +532,7 @@ For Windows 10/11:
 <color:#0078d4>████████   ████████<color:reset>   <color:#0078d4>Shell<color:reset>: cmd
 <color:#0078d4>████████   ████████<color:reset>   <color:#0078d4>CPU<color:reset>: AMD EPYC 7763 (4) @ 2.45 GHz
 <color:#0078d4>████████   ████████<color:reset>   <color:#0078d4>Memory<color:reset>: 1024 MiB / 16384 MiB
-
-For Arch Linux:
+Arch Linux:
 <color:#1793d1>         /\          <color:reset>   root@archiso
 <color:#1793d1>        /  \         <color:reset>   ------------
 <color:#1793d1>       /\   \        <color:reset>   <color:#1793d1>OS<color:reset>: Arch Linux x86_64
@@ -571,8 +542,7 @@ For Arch Linux:
 <color:#1793d1>   /_-''    ''-_\    <color:reset>   <color:#1793d1>Shell<color:reset>: bash 5.2.32
 <color:#1793d1>  (____      ____)   <color:reset>   <color:#1793d1>CPU<color:reset>: AMD EPYC 7763 (4) @ 2.45 GHz
 <color:#1793d1>       `----'        <color:reset>   <color:#1793d1>Memory<color:reset>: 247 MiB / 16384 MiB
-
-For Ubuntu:
+Ubuntu:
 <color:#e95420>          _          <color:reset>   root@ubuntu
 <color:#e95420>      ---(_)         <color:reset>   -----------
 <color:#e95420>  _/  ---  \         <color:reset>   <color:#e95420>OS<color:reset>: Ubuntu 24.04 LTS x86_64
@@ -581,9 +551,7 @@ For Ubuntu:
 <color:#e95420>      ---(_)         <color:reset>   <color:#e95420>Uptime<color:reset>: 5 mins
 <color:#e95420>                     <color:reset>   <color:#e95420>Shell<color:reset>: bash 5.2.21
 <color:#e95420>                     <color:reset>   <color:#e95420>CPU<color:reset>: AMD EPYC 7763 (4) @ 2.45 GHz
-<color:#e95420>                     <color:reset>   <color:#e95420>Memory<color:reset>: 312 MiB / 16384 MiB
-
-Tags: <color:#HEX> <color:reset> <bgcolor:#HEX> <bgcolor:reset> <timeout:X> <clear:zae_term> <request>."""
+<color:#e95420>                     <color:reset>   <color:#e95420>Memory<color:reset>: 312 MiB / 16384 MiB"""
 
 
 _BOOT = r"""<clear:zae_term>
@@ -594,7 +562,7 @@ _BOOT = r"""<clear:zae_term>
 <color:#651fff>███████╗<color:#1de9b6>██║  ██║<color:#2979ff>███████╗
 <color:#3d5afe>╚══════╝<color:#00bfa5>╚═╝  ╚═╝<color:#304ffe>╚══════╝<color:reset>
 
-<color:#ff007f>:3<color:reset> <color:#6272a4>a virtual machine that can run any OS. v3. Powered by Groq. github: @rootlesszen<color:reset>
+<color:#ff007f>:3<color:reset> <color:#6272a4>a virtual machine that can run any OS. v3.2. Powered by Groq. github: @rootlesszen<color:reset>
 <timeout:0.18>
 Press F11 for Fullscreen, Esc to exit.
 """
@@ -629,7 +597,7 @@ class _W_Thread(QThread):
         for attempt, mdl in enumerate(order):
             if self._stop: return
             is_reason = any(r in mdl for r in _REASON_MODELS)
-            maxt = 700 if is_reason else 800
+            maxt = 500 if is_reason else 600
             pl = {
                 "model": mdl,
                 "messages": self._msgs,
@@ -699,7 +667,7 @@ class _W_Thread(QThread):
                                         break
                                 elif w:
                                     _rep_word = w; _rep_count = 1
-                                if len(ft) > 3000 or _line_count > 80:
+                                if len(ft) > 3000 or _line_count > 40:
                                     _looped = True
                                     break
                         except Exception:
@@ -998,7 +966,18 @@ class _Term(QPlainTextEdit):
         self._raw_insert(f"╔{bar}╗\n", "#4444aa")
         self._raw_insert(f"║{'ZAE MODEL SELECTOR':^52}║\n", "#4444aa")
         self._raw_insert(f"╠{bar}╣\n", "#4444aa")
-        for i, m in enumerate(self._models):
+        max_v = 14
+        total = len(self._models)
+        if total <= max_v:
+            start_i = 0
+            end_i = total
+        else:
+            half = max_v // 2
+            start_i = max(0, min(self._model_menu_idx - half, total - max_v))
+            end_i = start_i + max_v
+
+        for i in range(start_i, end_i):
+            m = self._models[i]
             name = m[:46]
             if i == self._model_menu_idx:
                 line = f" ► {name:<47} "
@@ -1011,7 +990,8 @@ class _Term(QPlainTextEdit):
                 self._raw_insert(line, "#808080")
                 self._raw_insert("║\n", "#4444aa")
         self._raw_insert(f"╠{bar}╣\n", "#4444aa")
-        self._raw_insert(f"║{'↑/↓ Navigate   Enter: Select   Esc: Cancel':^52}║\n", "#555555")
+        footer_text = f"↑/↓ Navigate   Enter: Select ({self._model_menu_idx+1}/{total})"
+        self._raw_insert(f"║{footer_text:^52}║\n", "#555555")
         self._raw_insert(f"╚{bar}╝\n", "#4444aa")
 
     def keyPressEvent(self, e):
@@ -1113,12 +1093,9 @@ class _Term(QPlainTextEdit):
         self._waiting_input = False
         self._busy = True
         self.setReadOnly(True)
-        self._msgs.append({"role": "user", "content": answer})
+        self._msgs.append({"role": "user", "content": answer.strip()[:600]})
         sc = self._get_sys_prompt() + "\n" + self._st.hdr()
-        pm = [{"role": "system", "content": sc}]
-        tail = self._msgs[-24:]
-        for m in tail:
-            pm.append({"role": m["role"], "content": m["content"][:1500]})
+        pm = [{"role": "system", "content": sc}] + self._msgs[-8:]
         self._spin_status = ""
         self._wk = _W_Thread(self._k, pm, self._models, silent=False)
         self._wk.chunk.connect(self._otc)
@@ -1168,8 +1145,8 @@ class _Term(QPlainTextEdit):
             if os_name:
                 self._st.switch_custom(os_name)
                 self._sys_override = _SYS.replace(
-                    "You are a raw TTY/console emulator for a virtual machine.",
-                    f"You are a raw TTY/console emulator for a virtual machine running {os_name}. The OS is ALWAYS {os_name}, never switch to any other OS unless the user explicitly runs >zae osinstall."
+                    "Raw TTY/console emulator.",
+                    f"Raw TTY/console emulator running {os_name}. OS is ALWAYS {os_name}."
                 )
                 self._otc(_BOOT)
                 self._ic(f"OS set: {os_name}\n", "#77dd77")
@@ -1183,8 +1160,8 @@ class _Term(QPlainTextEdit):
                 self._st.hn = "custom"
                 self._st.cd = "/root"
                 self._sys_override = _SYS.replace(
-                    "You are a raw TTY/console emulator for a virtual machine.",
-                    "You are a raw TTY/console emulator for a custom OS being built from scratch. The user is assembling kernel and components manually."
+                    "Raw TTY/console emulator.",
+                    "Raw TTY/console emulator for custom OS built from scratch."
                 )
                 self._otc(_BOOT)
                 self._ic("ZAE: Custom OS mode. Build your kernel and components from scratch.\n", "#ffff55")
@@ -1233,12 +1210,10 @@ class _Term(QPlainTextEdit):
             self._np(); return
 
         self._busy = True; self.setReadOnly(True)
-        self._msgs.append({"role": "user", "content": cmd})
+        self._msgs.append({"role": "user", "content": cmd.strip()[:1000]})
         sc = self._get_sys_prompt() + "\n" + self._st.hdr()
-        pm = [{"role": "system", "content": sc}]
-        tail = self._msgs[-24:]
-        for m in tail:
-            pm.append({"role": m["role"], "content": m["content"][:1500]})
+        pm = [{"role": "system", "content": sc}] + self._msgs[-8:]
+
         _sc = cmd.split()[0] if cmd.split() else ""
         _silent = _sc.lower() in ("cd", "mkdir", "touch", "export", "alias", "unset", "source",
                                    "chmod", "chown", "mv", "cp", "rm",
@@ -1297,10 +1272,12 @@ class _Term(QPlainTextEdit):
         clean_raw = re.sub(r'<{1,2}request>{1,2}', '', raw).rstrip()
         if clean_raw and not clean_raw.endswith("\n"):
             self._raw_insert("\n", self._cc)
-        if len(self._msgs) > 60:
-            self._msgs = self._msgs[-40:]
-        if clean_raw:
-            self._msgs.append({"role": "assistant", "content": clean_raw[:1500]})
+
+        hist_entry = _compress_for_history(clean_raw)
+        self._msgs.append({"role": "assistant", "content": hist_entry})
+        if len(self._msgs) > 20:
+            self._msgs = self._msgs[-16:]
+
         if has_request:
             self._waiting_input = True
             self._busy = False

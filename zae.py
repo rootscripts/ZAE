@@ -55,13 +55,6 @@ _SKIP = ("whisper", "guard", "embed", "vision", "tool", "tts", "image",
 
 _mi = 0
 
-_WIN_COLORS = {
-    "0": "#000000", "1": "#000080", "2": "#008000", "3": "#008080",
-    "4": "#800000", "5": "#800080", "6": "#808000", "7": "#c0c0c0",
-    "8": "#808080", "9": "#0000ff", "a": "#55ff55", "b": "#55ffff",
-    "c": "#ff5555", "d": "#ff55ff", "e": "#ffff55", "f": "#ffffff",
-}
-
 def _lk():
     e = os.environ.get("GROQ_API_KEY", "").strip()
     if e: return e
@@ -271,7 +264,11 @@ INTERACTIVE COMMANDS:
   Your next output: "(1/1) downloading firefox-128.0-1...   100%\n(1/1) installing firefox...              100%\n:: Running post-transaction hooks...\n(1/2) Updating icon theme caches...\n(2/2) Updating the desktop file MIME type cache..."
 
 COLOR COMMAND EMULATION:
-- Windows `color XY`: X=background, Y=foreground. Map: 0=black,1=navy,2=green,3=teal,4=maroon,5=purple,6=olive,7=silver,8=gray,9=blue,a=lime,b=cyan,c=red,d=magenta,e=yellow,f=white. Output nothing (silent command) but the app will handle the color change.
+- Windows `color XY`: X=background digit, Y=foreground digit. This is a SILENT command (no stdout). You must emit the appropriate tags to change terminal colors. Use <<bgcolor:#HEX>> for background and <<color:#HEX>> for foreground.
+  Hex map: 0=#000000, 1=#000080, 2=#008000, 3=#008080, 4=#800000, 5=#800080, 6=#808000, 7=#c0c0c0, 8=#808080, 9=#0000ff, a=#00ff00, b=#00ffff, c=#ff0000, d=#ff00ff, e=#ffff00, f=#ffffff.
+  Example: user types "color 0a" -> you output: <<bgcolor:#000000>><<color:#00ff00>>
+  Example: user types "color 0a & echo hello" -> you output: <<bgcolor:#000000>><<color:#00ff00>>hello
+  Example: user types "color 1f" -> you output: <<bgcolor:#000080>><<color:#ffffff>>
 - Bash ANSI escape sequences (\e[31m, \033[1;32m, etc.): emit them naturally as a real terminal would.
 
 FASTFETCH / NEOFETCH:
@@ -322,7 +319,7 @@ For Windows:
  ██████████████  ██████████████     <<color:#00adef>>CPU<<color:reset>>: AMD EPYC 7763 (4) @ 2.45 GHz
  ██████████████  ██████████████     <<color:#00adef>>Memory<<color:reset>>: 1024 MiB / 16384 MiB
 
-Tags you may use: <<color:#HEX>> <<color:reset>> <<timeout:X>> <<clear:zae_term>> <<request>>. Always close tags properly."""
+Tags you may use: <<color:#HEX>> <<color:reset>> <<bgcolor:#HEX>> <<bgcolor:reset>> <<timeout:X>> <<clear:zae_term>> <<request>>. Always close tags properly."""
 
 
 _BOOT = r"""<<clear:zae_term>>
@@ -785,30 +782,6 @@ class _Term(QPlainTextEdit):
         self._wk.start()
 
 
-    def _handle_color_cmd(self, arg):
-        arg = arg.strip().lower()
-        if len(arg) == 2:
-            bg_char = arg[0]
-            fg_char = arg[1]
-            fg = _WIN_COLORS.get(fg_char, _TC)
-            bg = _WIN_COLORS.get(bg_char, "#000000")
-            self._cc = fg
-            self._bg_cc = bg
-            self.setStyleSheet(f"""
-                QPlainTextEdit {{
-                    background-color: {bg};
-                    color: {fg};
-                    selection-background-color: #2e3440;
-                    selection-color: #ffffff;
-                    border: none;
-                    padding: 4px;
-                    margin: 0px;
-                    line-height: 1.22;
-                }}
-                QScrollBar:vertical {{ width: 0px; height: 0px; background: transparent; }}
-                QScrollBar:horizontal {{ width: 0px; height: 0px; background: transparent; }}
-            """)
-
     def _get_sys_prompt(self):
         if hasattr(self, '_sys_override') and self._sys_override:
             return self._sys_override
@@ -910,10 +883,6 @@ class _Term(QPlainTextEdit):
 
         _lc = cmd.strip().lower()
 
-        if self._st.plat == "windows" and _lc.startswith("color "):
-            self._handle_color_cmd(_lc[6:])
-            self._np(); return
-
         self._st.upd(cmd)
         self._pr = self._st.prompt()
 
@@ -993,6 +962,26 @@ class _Term(QPlainTextEdit):
             v = lo[6:].strip()
             if v == "reset": self._cc = _TC
             elif v.startswith("#"): self._cc = v
+        elif lo.startswith("bgcolor:"):
+            v = lo[8:].strip()
+            if v == "reset":
+                self._bg_cc = "#000000"
+            elif v.startswith("#"):
+                self._bg_cc = v
+            self.setStyleSheet(f"""
+                QPlainTextEdit {{
+                    background-color: {self._bg_cc};
+                    color: {self._cc};
+                    selection-background-color: #2e3440;
+                    selection-color: #ffffff;
+                    border: none;
+                    padding: 4px;
+                    margin: 0px;
+                    line-height: 1.22;
+                }}
+                QScrollBar:vertical {{ width: 0px; height: 0px; background: transparent; }}
+                QScrollBar:horizontal {{ width: 0px; height: 0px; background: transparent; }}
+            """)
         elif lo == "clear:zae_term":
             self.clear(); self._pp = 0
         elif lo == "request":

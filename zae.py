@@ -307,17 +307,16 @@ For Ubuntu:
                        <<color:#e95420>>CPU<<color:reset>>: AMD EPYC 7763 (4) @ 2.45 GHz
                        <<color:#e95420>>Memory<<color:reset>>: 312 MiB / 16384 MiB
 
-For Windows:
-<<color:#00adef>>
- ██████████████  ██████████████     <<color:reset>>root@DESKTOP-ZAE
- ██████████████  ██████████████     <<color:reset>>--------------------
- ██████████████  ██████████████     <<color:#00adef>>OS<<color:reset>>: Windows 11 Pro 23H2
- ██████████████  ██████████████     <<color:#00adef>>Host<<color:reset>>: QEMU Virtual Machine
-                                    <<color:#00adef>>Kernel<<color:reset>>: 10.0.22631
- ██████████████  ██████████████     <<color:#00adef>>Uptime<<color:reset>>: 2 mins
- ██████████████  ██████████████     <<color:#00adef>>Shell<<color:reset>>: cmd
- ██████████████  ██████████████     <<color:#00adef>>CPU<<color:reset>>: AMD EPYC 7763 (4) @ 2.45 GHz
- ██████████████  ██████████████     <<color:#00adef>>Memory<<color:reset>>: 1024 MiB / 16384 MiB
+For Windows 10/11:
+<<color:#0078d4>>████████  ████████<<color:reset>>   root@DESKTOP-ZAE
+<<color:#0078d4>>████████  ████████<<color:reset>>   ------------------
+<<color:#0078d4>>████████  ████████<<color:reset>>   <<color:#0078d4>>OS<<color:reset>>: Windows 11 Pro 23H2
+<<color:#0078d4>>                  <<color:reset>>   <<color:#0078d4>>Host<<color:reset>>: Virtual Machine
+<<color:#0078d4>>████████  ████████<<color:reset>>   <<color:#0078d4>>Kernel<<color:reset>>: 10.0.22631
+<<color:#0078d4>>████████  ████████<<color:reset>>   <<color:#0078d4>>Uptime<<color:reset>>: 2 mins
+<<color:#0078d4>>████████  ████████<<color:reset>>   <<color:#0078d4>>Shell<<color:reset>>: cmd
+<<color:#0078d4>>████████  ████████<<color:reset>>   <<color:#0078d4>>CPU<<color:reset>>: AMD EPYC 7763 (4) @ 2.45 GHz
+                     <<color:#0078d4>>Memory<<color:reset>>: 1024 MiB / 16384 MiB
 
 Tags you may use: <<color:#HEX>> <<color:reset>> <<bgcolor:#HEX>> <<bgcolor:reset>> <<timeout:X>> <<clear:zae_term>> <<request>>. Always close tags properly."""
 
@@ -689,7 +688,7 @@ class _Term(QPlainTextEdit):
                 global _mi
                 _mi = old_idx
                 self._models = [chosen] + [m for m in self._models if m != chosen]
-                self._ic(f"<<color:#55ff55>>model set: {chosen}<<color:reset>>\n", "#55ff55")
+                self._ic(f"model set: {chosen}\n", "#77dd77")
                 self._np()
                 return
             elif e.key() == Qt.Key.Key_Escape:
@@ -852,7 +851,7 @@ class _Term(QPlainTextEdit):
                     f"You are a raw TTY/console emulator for a virtual machine running {os_name}. The OS is ALWAYS {os_name}, never switch to any other OS unless the user explicitly runs >zae osinstall."
                 )
                 self._otc(_BOOT)
-                self._ic(f"<<color:#55ff55>>OS set: {os_name}<<color:reset>>\n", "#55ff55")
+                self._ic(f"OS set: {os_name}\n", "#77dd77")
                 self._pr = self._st.prompt()
                 if self._st.plat == "windows" and self._st.shell == "powershell":
                     self._pr = "PS " + self._st.prompt()
@@ -937,6 +936,7 @@ class _Term(QPlainTextEdit):
         ch = ch.replace("```bash", "").replace("```text", "").replace("```", "")
         if not ch: return
         self._sb += ch
+        self._sb = re.sub(r'(?<!\<)\<((?:color|bgcolor|timeout|clear|request)[^<>]*)\>(?!\>)', r'<<\1>>', self._sb)
         while self._sb:
             ts = self._sb.find("<<")
             if ts == -1:

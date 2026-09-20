@@ -227,6 +227,8 @@ class _St:
         self.cd = "/root"
         self.shell = "bash"
         self.fs = {}
+        self.dirs = set()
+        self._dirstack = []
         self._initial_plat = "linux"
 
     def switch(self, plat):
@@ -237,6 +239,9 @@ class _St:
         self.hn = "archiso" if plat == "linux" else ("DESKTOP-ZAE" if plat == "windows" else "zae-mac")
         self.shell = {"linux": "bash", "windows": "cmd", "macos": "zsh"}.get(plat, "bash")
         self._initial_plat = plat
+        self.fs = {}
+        self.dirs = set()
+        self._dirstack = []
 
     def switch_custom(self, os_name):
         self.os = os_name
@@ -273,49 +278,228 @@ class _St:
             self.hn = re.sub(r'[^a-zA-Z0-9]', '', os_name.split()[0].lower())[:12] or "zae"
         self._initial_plat = self.plat
         self.fs = {}
+        self.dirs = set()
+        self._dirstack = []
 
     def prompt(self):
         if self.plat == "windows":
-            return self.cd + ">"
+            return self.cd.rstrip("\\") + ">" if self.cd != "C:\\" else "C:\\>"
         pc = "~" if self.cd in ("/root", "/Users/root") else self.cd
         return f"{self.u}@{self.hn} {pc} # "
 
-    def upd(self, txt):
+    def _abs_path(self, p):
+        p = p.strip().strip('"').strip("'")
         if self.plat == "windows":
+            p = p.replace("/", "\\")
+            if re.match(r'^[a-zA-Z]:', p):
+                return p
+            if p.startswith("\\"):
+                drive = self.cd[:2].upper() if len(self.cd) >= 2 and self.cd[1] == ":" else "C:"
+                return drive + p
+            base = self.cd.rstrip("\\")
+            return (base + "\\" + p) if base else ("C:\\" + p)
+        else:
+            if p.startswith("~"):
+                h = "/root" if self.u == "root" else f"/home/{self.u}"
+                p = h + p[1:]
+            if p.startswith("/"):
+                return p
+            base = self.cd.rstrip("/")
+            return (base + "/" + p) if base else ("/" + p)
+
+    def _resolve_cd(self, tgt):
+        tgt = tgt.strip().strip('"').strip("'")
+        if not tgt:
+            if self.plat == "windows":
+                return
+            else:
+                self.cd = "/root" if self.u == "root" else f"/home/{self.u}"
+                return
+
+        if tgt in ("/?", "--help", "-h"):
             return
+
+        if self.plat == "windows":
+            if tgt.lower().startswith("/d "):
+                tgt = tgt[3:].strip().strip('"').strip("'")
+            tgt = tgt.replace("/", "\\")
+            if tgt == ".":
+                return
+
+            if re.match(r'^[a-zA-Z]:', tgt):
+                drive = tgt[:2].upper()
+                rest = tgt[2:].lstrip("\\")
+                if not rest:
+                    self.cd = drive + "\\"
+                    return
+                parts = [p for p in rest.split("\\") if p and p != "."]
+                resolved = []
+                for p in parts:
+                    if p == "..":
+                        if resolved: resolved.pop()
+                    else:
+                        resolved.append(p)
+                self.cd = drive + "\\" + "\\".join(resolved) if resolved else drive + "\\"
+                return
+            elif tgt.startswith("\\"):
+                drive = self.cd[:2].upper() if len(self.cd) >= 2 and self.cd[1] == ":" else "C:"
+                parts = [p for p in tgt.lstrip("\\").split("\\") if p and p != "."]
+                resolved = []
+                for p in parts:
+                    if p == "..":
+                        if resolved: resolved.pop()
+                    else:
+                        resolved.append(p)
+                self.cd = drive + "\\" + "\\".join(resolved) if resolved else drive + "\\"
+                return
+            else:
+                curr = self.cd
+                drive = curr[:2].upper() if len(curr) >= 2 and curr[1] == ":" else "C:"
+                body = curr[2:].strip("\\")
+                parts = [p for p in body.split("\\") if p]
+                for seg in tgt.split("\\"):
+                    seg = seg.strip()
+                    if not seg or seg == ".":
+                        continue
+                    elif seg == "..":
+                        if parts: parts.pop()
+                    else:
+                        parts.append(seg)
+                self.cd = drive + "\\" + "\\".join(parts) if parts else drive + "\\"
+                return
+        else:
+            if tgt == "~":
+                self.cd = "/root" if self.u == "root" else f"/home/{self.u}"
+                return
+            if tgt.startswith("~/"):
+                h = "/root" if self.u == "root" else f"/home/{self.u}"
+                tgt = h + tgt[1:]
+            if tgt.startswith("/"):
+                parts = [p for p in tgt.split("/") if p and p != "."]
+                resolved = []
+                for p in parts:
+                    if p == "..":
+                        if resolved: resolved.pop()
+                    else:
+                        resolved.append(p)
+                self.cd = "/" + "/".join(resolved) if resolved else "/"
+                return
+            else:
+                parts = [p for p in self.cd.split("/") if p]
+                for seg in tgt.split("/"):
+                    seg = seg.strip()
+                    if not seg or seg == ".":
+                        continue
+                    elif seg == "..":
+                        if parts: parts.pop()
+                    else:
+                        parts.append(seg)
+                self.cd = "/" + "/".join(parts) if parts else "/"
+                return
+
+    def _add_file(self, path, content=""):
+        ap = self._abs_path(path)
+        if "os-release" in ap:
+            m = re.search(r'(?:PRETTY_NAME|NAME)\s*=\s*["\'"]?([^"\']+)["\'"]?', content)
+            if m: self.os = m.group(1).strip()
+        self.fs[ap] = content
+
+    def _add_dir(self, path):
+        ap = self._abs_path(path)
+        self.dirs.add(ap)
+
+    def _remove_path(self, path):
+        ap = self._abs_path(path)
+        if ap in self.fs:
+            del self.fs[ap]
+        if ap in self.dirs:
+            self.dirs.discard(ap)
+        prefix = ap.rstrip("\\/") + ("\\" if self.plat == "windows" else "/")
+        for k in list(self.fs.keys()):
+            if k.startswith(prefix):
+                del self.fs[k]
+        for d in list(self.dirs):
+            if d.startswith(prefix):
+                self.dirs.discard(d)
+
+    def upd(self, txt):
         t = txt + "\n"
-        for m in re.finditer(r'^cd\s+(.+)$', t, re.MULTILINE):
-            tgt = m.group(1).strip()
-            if tgt in ("~", ""): self.cd = "/root" if self.u == "root" else f"/home/{self.u}"
-            elif tgt.startswith("/"): self.cd = tgt
-            elif tgt == "..":
-                pts = self.cd.rstrip("/").split("/")
-                self.cd = "/".join(pts[:-1]) if len(pts) > 1 else "/"
-            else: self.cd = f"{self.cd.rstrip('/')}/{tgt}"
+
         for m in re.finditer(r'(?:hostnamectl\s+set-hostname|hostname)\s+([a-zA-Z0-9_\-]+)', t):
             self.hn = m.group(1)
-        for m in re.finditer(r'cat\s*<<\s*[\'\"]?(\w+)[\'\"]?\s*>\s*(\S+)\n(.*?)\n\1', t, re.DOTALL):
-            self._sf(m.group(2), m.group(3).strip())
-        for m in re.finditer(r'echo\s+[\'\"]?(.*?)[\'\"]?\s*>\s*(\S+)', t):
-            self._sf(m.group(2), m.group(1))
 
-    def _sf(self, rp, c):
-        if rp.startswith("~/"):
-            h = "/root" if self.u == "root" else f"/home/{self.u}"
-            rp = h + "/" + rp[2:]
-        p = rp if rp.startswith("/") else f"{self.cd.rstrip('/')}/{rp}"
-        if "os-release" in p:
-            m = re.search(r'(?:PRETTY_NAME|NAME)\s*=\s*["\'"]?([^"\']+)["\'"]?', c)
-            if m: self.os = m.group(1).strip()
-        self.fs[p] = c
+        for m in re.finditer(r'cat\s*<<\s*[\'\"]?(\w+)[\'\"]?\s*>\s*(\S+)\n(.*?)\n\1', t, re.DOTALL):
+            self._add_file(m.group(2), m.group(3).strip())
+
+        subcmds = re.split(r'[;&|\n]+', txt)
+        for sub in subcmds:
+            sub = sub.strip()
+            if not sub:
+                continue
+
+            m_cd = re.match(r'^cd(?:\s+(.+)|(\.\.|\.|\/|\\.*))$', sub, re.IGNORECASE)
+            if m_cd:
+                tgt = m_cd.group(1) or m_cd.group(2) or ""
+                self._resolve_cd(tgt.strip())
+                continue
+
+            if re.match(r'^pushd\s+(.+)$', sub, re.IGNORECASE):
+                p_tgt = sub[5:].strip().strip('"').strip("'")
+                self._dirstack.append(self.cd)
+                self._resolve_cd(p_tgt)
+                continue
+
+            if re.match(r'^popd$', sub, re.IGNORECASE):
+                if self._dirstack:
+                    self.cd = self._dirstack.pop()
+                continue
+
+            m_mk = re.match(r'^(?:mkdir|md)(?:\s+-[a-zA-Z]+)*\s+(.+)$', sub, re.IGNORECASE)
+            if m_mk:
+                d_tgt = m_mk.group(1).strip().strip('"').strip("'")
+                self._add_dir(d_tgt)
+                continue
+
+            m_tch = re.match(r'^touch\s+(.+)$', sub, re.IGNORECASE)
+            if m_tch:
+                for f_item in m_tch.group(1).split():
+                    if not f_item.startswith("-"):
+                        self._add_file(f_item.strip('"').strip("'"), "")
+                continue
+
+            m_rm = re.match(r'^(?:rm|del|erase|rmdir|rd)(?:\s+-[a-zA-Z]+|\s+/[a-zA-Z]+)*\s+(.+)$', sub, re.IGNORECASE)
+            if m_rm:
+                r_tgt = m_rm.group(1).strip().strip('"').strip("'")
+                self._remove_path(r_tgt)
+                continue
+
+            m_red = re.search(r'(?:>>|>)\s*([^\s;&|<>]+)$', sub)
+            if m_red:
+                out_file = m_red.group(1).strip().strip('"').strip("'")
+                m_echo = re.match(r'^echo\s+(.*?)\s*(?:>>|>)', sub, re.IGNORECASE)
+                c = m_echo.group(1).strip().strip('\'"') if m_echo else ""
+                self._add_file(out_file, c)
+                continue
 
     def hdr(self):
         cf = []
-        for k, v in list(self.fs.items())[-4:]:
-            dk = k.replace("/root/", "~/") if self.u == "root" else k
-            cf.append(f"{dk}: {v[:800]}")
-        fs = "; ".join(cf)
-        return f"[PLATFORM={self.plat} OS={self.os} SHELL={self.shell} HOST={self.hn} USER={self.u} CWD={self.cd}]{' FILES: '+fs if fs else ''}"
+        for k, v in list(self.fs.items())[-25:]:
+            preview = f'="{v[:100]}"' if v else ""
+            cf.append(f"{k}{preview}")
+        df = list(self.dirs)[-15:]
+        info = [
+            f"PLATFORM={self.plat}",
+            f"OS={self.os}",
+            f"SHELL={self.shell}",
+            f"HOST={self.hn}",
+            f"USER={self.u}",
+            f"CWD={self.cd}"
+        ]
+        if cf:
+            info.append(f"VFS_FILES: {', '.join(cf)}")
+        if df:
+            info.append(f"VFS_DIRS: {', '.join(df)}")
+        return "[" + " | ".join(info) + "]"
 
 
 _SYS = r"""You are a raw TTY/console emulator for a virtual machine. Output ONLY the exact bytes a real terminal/console would print for the given command. No chat, no markdown, no apologies, no explanations, no commentary.
@@ -330,6 +514,12 @@ HARD RULES:
 7. Multi-OS: match PLATFORM's real command set, output, path style (/ vs \), shell exactly.
 8. If user asks to install another OS, simulate a condensed install log, then finish.
 9. When user sends a bare input like "y", "n", "1", "2", "yes", "no", or any short text after a previous command that asked for input: treat it as the ANSWER to the previous interactive prompt. Do NOT treat it as a shell command. Produce the realistic continuation of the previous interactive session as if the user typed that answer at the prompt.
+
+CRITICAL CWD TRACKING:
+You must accurately track the Current Working Directory across commands. Whenever the directory changes via 'cd', the resulting shell prompt MUST reflect the new absolute path (e.g. 'cd ..' from C:\Users\root must change prompt to 'C:\Users>'). The application draws the prompt using CWD from header, but all your command outputs, relative path resolutions, and directory listings MUST strictly match the active CWD.
+
+PERSISTENCE:
+Maintain a persistent virtual filesystem state in memory for the active session. If a file or directory is created with echo, touch, mkdir, or redirected output, it MUST continue to exist in subsequent 'dir', 'ls', and 'type' calls until explicitly deleted. Never reset filesystem state to default during the session. You must reflect all files and directories listed in [VFS_FILES: ...] and [VFS_DIRS: ...] in directory listings whenever the user inspects that directory.
 
 CRITICAL - OUTPUT LENGTH CONTROL:
 - CRITICAL: Never loop identical lines. If command output is huge (like dir /s, ls -R, find /, pacman -Ss, apt list, yay, pip list, tree), output only 30 realistic lines, write '[... truncated ...]' and immediately stop.
@@ -398,7 +588,7 @@ Tags: <color:#HEX> <color:reset> <bgcolor:#HEX> <bgcolor:reset> <timeout:X> <cle
 
 _BOOT = r"""<clear:zae_term>
 <color:#ff1744>███████╗ <color:#ff9100>█████╗  <color:#ffea00>███████╗
-<color:#ff007f>╚══███╔╝<color:#ffab00>>██╔══██╗<color:#ffff00>██╔════╝
+<color:#ff007f>╚══███╔╝<color:#ffab00>██╔══██╗<color:#ffff00>██╔════╝
 <color:#d500f9>  ███╔╝ <color:#00e676>███████║<color:#00e5ff>█████╗
 <color:#aa00ff> ███╔╝  <color:#00c853>██╔══██║<color:#00b0ff>██╔══╝
 <color:#651fff>███████╗<color:#1de9b6>██║  ██║<color:#2979ff>███████╗
@@ -926,9 +1116,9 @@ class _Term(QPlainTextEdit):
         self._msgs.append({"role": "user", "content": answer})
         sc = self._get_sys_prompt() + "\n" + self._st.hdr()
         pm = [{"role": "system", "content": sc}]
-        tail = self._msgs[-6:]
+        tail = self._msgs[-24:]
         for m in tail:
-            pm.append({"role": m["role"], "content": m["content"][-600:]})
+            pm.append({"role": m["role"], "content": m["content"][:1500]})
         self._spin_status = ""
         self._wk = _W_Thread(self._k, pm, self._models, silent=False)
         self._wk.chunk.connect(self._otc)
@@ -1046,10 +1236,9 @@ class _Term(QPlainTextEdit):
         self._msgs.append({"role": "user", "content": cmd})
         sc = self._get_sys_prompt() + "\n" + self._st.hdr()
         pm = [{"role": "system", "content": sc}]
-        tail = self._msgs[-6:]
+        tail = self._msgs[-24:]
         for m in tail:
-            ct = m["content"][-600:]
-            pm.append({"role": m["role"], "content": ct})
+            pm.append({"role": m["role"], "content": m["content"][:1500]})
         _sc = cmd.split()[0] if cmd.split() else ""
         _silent = _sc.lower() in ("cd", "mkdir", "touch", "export", "alias", "unset", "source",
                                    "chmod", "chown", "mv", "cp", "rm",
@@ -1108,10 +1297,10 @@ class _Term(QPlainTextEdit):
         clean_raw = re.sub(r'<{1,2}request>{1,2}', '', raw).rstrip()
         if clean_raw and not clean_raw.endswith("\n"):
             self._raw_insert("\n", self._cc)
-        if len(self._msgs) > 30:
-            self._msgs = self._msgs[-10:]
+        if len(self._msgs) > 60:
+            self._msgs = self._msgs[-40:]
         if clean_raw:
-            self._msgs.append({"role": "assistant", "content": clean_raw[:400]})
+            self._msgs.append({"role": "assistant", "content": clean_raw[:1500]})
         if has_request:
             self._waiting_input = True
             self._busy = False

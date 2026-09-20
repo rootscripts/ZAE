@@ -1,25 +1,25 @@
+
 <p align="center">
   <img src="data/zae.png" alt="ZAE" width="100%">
 </p>
 
 # ZAE
 
-Virtual machine emulator in a terminal window. Type Linux commands, get realistic output. Runs on Groq LLM inference.
+Virtual machine and OS emulator inside a GPU-accelerated terminal window. Type commands, simulate entire platforms (Arch Linux, Windows Vista/11, macOS, Custom Kernels), build projects, and run realistic scripts. Powered by Groq LLM inference with persistent VFS (Virtual File System) tracking.
 
-ZAE renders a fake Arch Linux TTY with a boot sequence, prompt, command history, colored output. Commands are sent to Groq API which returns simulated terminal output. Supports custom tags for colors, timeouts, screen clear.
+ZAE renders an authentic TTY/CMD interface complete with boot screens, prompt feedback, command history, 24-bit ANSI colors, and an embedded retro IBM VGA font. All terminal output is hallucinated in real time without executing dangerous commands on your host system.
 
-Works on Linux (X11, Wayland, Hyprland) and Windows.
+Works seamlessly on Linux (X11, Wayland, Hyprland) and Windows.
 
 # WARNING
-This is completely emulation of a virtual machine powered by AI.
-AI gives not 100% accurate response. Please don't report issues about bad responses or hallucinations.
-The terminal can't touch your PC.
+This is a pure AI-driven operating system simulator.
+- Output is generated on the fly by language models.
+- The emulator is completely sandboxed: commands like `rm -rf /` or `format C:` will **not** affect your real computer.
+- Safe environment for testing, roleplaying, scripting experiments, and custom OS concepts.
 
 ## What it does
 
-You type a command like `ls`, `ping google.com`, `fastfetch`, `cowsay hello`. ZAE sends it to Groq, gets back what a real terminal would print, and renders it in the window with color support and a retro IBM VGA font.
-
-Not a real shell. No actual commands are executed on your machine.
+Enter any shell command (`ls`, `pacman -S neofetch`, `dir /s`, `color 1f`, `cat << 'EOF' > run.sh`). ZAE parses the state, tracks files locally inside its Virtual File System (VFS), queries the LLM, and streams back byte-perfect terminal output with ANSI colors and realistic typing latency.
 
 ## Requirements
 
@@ -33,118 +33,135 @@ Not a real shell. No actual commands are executed on your machine.
 ### Linux (native)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rootscripts/ZAE/main/install.sh | bash
-```
-
-This downloads `zae.py` to `~/.local/bin/`, creates a `zae` launcher, and adds it to PATH. Works on any distro.
-
-After install, restart your shell (or run `export PATH="$HOME/.local/bin:$PATH"`) and type:
+curl -fsSL [https://raw.githubusercontent.com/rootscripts/ZAE/main/install.sh](https://raw.githubusercontent.com/rootscripts/ZAE/main/install.sh) | bash
 
 ```
+
+After install, restart your shell or run `export PATH="$HOME/.local/bin:$PATH"`, then launch:
+
+```bash
 zae
+
 ```
 
-### Windows (unstable!!)
+### Windows (unstable)
 
-Open Command Prompt (cmd) as admin and run:
+Open Command Prompt (cmd) as Administrator and run:
 
 ```cmd
-curl -fsSL https://raw.githubusercontent.com/rootscripts/ZAE/main/install.bat -o %TEMP%\install_zae.bat && %TEMP%\install_zae.bat
-```
-
-The script finds your Python install automatically, downloads `zae.py` to `%USERPROFILE%\.zae\`, creates `zae.bat`, and adds it to PATH.
-
-After install, open a new cmd window and type:
+curl -fsSL [https://raw.githubusercontent.com/rootscripts/ZAE/main/install.bat](https://raw.githubusercontent.com/rootscripts/ZAE/main/install.bat) -o %TEMP%\install_zae.bat && %TEMP%\install_zae.bat
 
 ```
+
+Open a new Command Prompt window and launch:
+
+```cmd
 zae
+
 ```
 
 ### Manual install (any OS)
 
 ```bash
 pip install PyQt6 certifi
-curl -fsSL https://raw.githubusercontent.com/rootscripts/ZAE/main/zae.py -o zae.py
+curl -fsSL [https://raw.githubusercontent.com/rootscripts/ZAE/main/zae.py](https://raw.githubusercontent.com/rootscripts/ZAE/main/zae.py) -o zae.py
 python3 zae.py
+
 ```
 
 ## First launch
 
-On first run ZAE will ask for your Groq API key. Paste it (starts with `gsk_`) and press Enter. The key is saved to `~/.config/zae/groq_key` (Linux) or `%USERPROFILE%\.config\zae\groq_key` (Windows).
+On first run, paste your Groq API key (starts with `gsk_`) directly into the prompt. The key is saved to `~/.config/zae/groq_key` (Linux) or `%USERPROFILE%\.config\zae\groq_key` (Windows).
 
-You can also set it as an environment variable:
+You can also pass it via environment variable:
 
 ```bash
 export GROQ_API_KEY=gsk_your_key_here
+
 ```
 
 ## Controls
 
 | Key | Action |
-|---|---|
+| --- | --- |
 | Enter | Execute command |
-| Ctrl+C | Cancel current request / interrupt |
-| Esc | Exit (or cancel if busy) |
-| F11 | Toggle fullscreen |
+| Ctrl+C | Interrupt / Cancel current generation |
+| Esc | Exit application (or cancel execution) |
+| F11 | Toggle Fullscreen mode |
 | Ctrl+D | Exit (on empty prompt) |
-| Up/Down | Command history |
+| Up / Down | Navigate command history |
 
-## Built-in commands
+## Built-in `>zae` Engine Commands
 
-- `clear` — clear screen
-- `reboot` — replay boot sequence
-- `exit` / `poweroff` — close ZAE
-- `>zae show` — debug info (last model used, raw response)
+Control the emulator state and configuration directly through internal `>zae` directives:
+
+* **`>zae osinstall <OS_NAME>`**
+Installs/switches to any target operating system on the fly. Automatically resets memory and reconfigures prompts, shells, directory paths, and command syntax:
+```bash
+>zae osinstall Windows Vista
+>zae osinstall Ubuntu 24.04
+>zae osinstall macOS Sonoma
+
+```
+
+
+Running `>zae osinstall` without arguments switches to **Custom OS mode** (scratch environment with toolchain utilities like `gcc`, `make`, `ld`, and `fdisk`).
+* **`>zae model`**
+Opens the interactive terminal GUI selector to swap Groq models in real time (`llama-3.1-8b-instant`, `llama-3.3-70b-versatile`, `openai/gpt-oss-120b`). Use `Up`/`Down` arrows to navigate and `Enter` to confirm.
+* **`>zae reset`**
+Performs a complete cold restart: clears VFS, purges conversation context, resets colors, and redraws the boot sequence.
+* **`>zae show`**
+Displays debug metadata: active model name and the raw, unparsed response string from the latest generation.
+* **`gsk_...`**
+Update your Groq API key on the fly by pasting a new key into the prompt.
+
+## Shell Features & Virtual Filesystem (VFS)
+
+* **Persistent VFS:** Writing files with `echo ... > file`, appending with `>>`, or creating multiline scripts via heredocs (`cat << 'EOF' > file`) stores the file in memory. Reading them via `cat` or `type` returns accurate contents.
+* **Path Resolution:** Directory changes (`cd`, `pushd`, `popd`) accurately maintain state across relative and absolute paths for both Linux (`/`) and Windows (`\`).
+* **Windows CMD Emulation:** Supports authentic `color XY` palette changes, native command parsing (`dir`, `cls`, `type`), and syntax errors on foreign Unix commands.
+* **Interactive Prompts (`<<request>>`):** Automatically detects commands requesting user input (e.g. `passwd`, confirmation prompts, interactive installers), suspends execution, and passes the input back into the stream.
+* **Token Pruning:** Maintains rolling message history and compresses verbose command outputs to avoid rate limits and context bloat.
 
 ## FAQ
 
-**Q: SSL errors on Windows / `CERTIFICATE_VERIFY_FAILED`**
+**Q: Rate limit errors (HTTP 429)**
 
-ZAE disables strict SSL verification on Windows by default. If you still get errors, install certifi:
-```
-pip install certifi
-```
-If that doesn't help, your network might be blocking Groq API. Try a VPN.
+Groq free tier enforces token-per-minute (TPM) limits. ZAE features automatic context truncation, but if a limit occurs, wait for the displayed cooldown or paste a fresh key (`gsk_...`).
 
-**Q: `zae` command not found after install**
+**Q: 404 Model Not Found**
 
-Linux: restart your shell or run `source ~/.bashrc`. Make sure `~/.local/bin` is in your PATH.
+Run `>zae model` to pick an active model. ZAE automatically removes deprecated models and falls back to `llama-3.1-8b-instant`.
 
-Windows: open a new cmd window. The installer adds the path via `setx` which only applies to new sessions.
+**Q: SSL errors on Windows / `CERTIFICATE_VERIFY_FAILED**`
 
-**Q: Python not found (Windows)**
+Install certifi (`pip install certifi`). ZAE includes automatic fallback routines for Windows certificate trust stores.
 
-Install Python from [python.org](https://python.org). During install, check "Add Python to PATH". If already installed but the installer can't find it, run `where python` to check.
+## Changelog
 
-**Q: Window won't close / freezes (Windows)**
+### v3.2.0
 
-Fixed in current version. ZAE now uses standard window decorations on Windows (title bar with close button). Click the X or press Esc.
+* **Dynamic OS Installation (`>zae osinstall`):** Added live switching between guest systems (Windows Vista/7/11, Arch, Ubuntu, macOS, or Custom OS toolchains).
+* **Interactive Model Picker (`>zae model`):** In-terminal TUI menu for hot-swapping models without restarting.
+* **VFS Overhaul:** Native support for multiline `cat << 'EOF'` heredocs and append redirection (`>>`).
+* **Context Optimizer:** Rolling window compression to prevent TPM rate limits on repetitive or verbose commands (`dir /s`, dumps).
+* **Removed Fake Status Markers:** Completely eliminated synthetic `"done"` outputs, allowing authentic shell silence and raw stream rendering.
 
-**Q: 403 Forbidden from Groq**
+### v3.1.0
 
-Your IP might be blocked. Use a VPN. Or your API key is wrong — regenerate it at console.groq.com.
+* Added Windows CMD emulation engine with real-time `color` hex switching and Windows file path resolution.
+* Added support for interactive prompts via `<<request>>` token handling.
+* Enhanced ANSI 256-color and 24-bit TrueColor parsing routines.
 
-**Q: Rate limit errors**
+### v3.0.0
 
-Groq free tier has rate limits. Wait the time shown in the error message. ZAE automatically tries multiple models if one is rate-limited.
-
-**Q: Model is hallucinating / giving weird output**
-
-Fixed in current version. Temperature is set to 0.0 and the system prompt is strict. If you still see odd output, type `clear` to reset context and try again.
-
-**Q: PyQt6 import error**
-
-```
-pip install PyQt6
-```
-
-On some Linux distros you might need the system package instead:
-```
-sudo pacman -S python-pyqt6        # Arch
-sudo apt install python3-pyqt6     # Debian/Ubuntu
-sudo dnf install python3-qt6       # Fedora
-```
+* Complete migration to Groq streaming API with sub-second response times.
+* Integrated IBM VGA 8x16 retro font autoloading.
+* Added initial support for Hyprland window rules.
 
 ## License
 
 MIT
+
+```
+

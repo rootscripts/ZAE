@@ -34,32 +34,30 @@ _TC = "#b0b0b0"
 _UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36 ZAE/3.0"
 
 _FM = [
-    "llama-3.3-70b-versatile",
     "llama-3.1-8b-instant",
-    "llama-3.1-70b-versatile",
-    "llama-3.2-3b-preview",
-    "llama-3.2-1b-preview",
-    "llama3-70b-8192",
-    "llama3-8b-8192",
-    "qwen-2.5-32b",
-    "qwen-2.5-coder-32b",
-    "qwen/qwen3-32b",
+    "llama-3.3-70b-versatile",
+    "meta-llama/llama-4-scout-17b-16e-instruct",
+    "meta-llama/llama-4-maverick-17b-128e-instruct",
     "qwen/qwen3.8-27b",
+    "qwen/qwen3-32b",
     "deepseek-r1-distill-llama-70b",
     "deepseek-r1-distill-qwen-32b",
     "mistral-saba-24b",
     "mistral-small-24b-instruct-2501",
     "mixtral-8x7b-32768",
     "gemma2-9b-it",
-    "meta-llama/llama-4-scout-17b-16e-instruct",
+    "llama-3.2-1b-preview",
+    "llama-3.2-3b-preview",
+    "llama-3.2-11b-vision-preview",
+    "llama-3.2-90b-vision-preview",
+    "llama-3.1-70b-versatile",
+    "llama3-70b-8192",
+    "llama3-8b-8192",
     "openai/gpt-oss-20b",
     "openai/gpt-oss-120b",
 ]
 
-_REASON_MODELS = ("gpt-oss", "qwen3", "qwen-2.5", "deepseek", "r1")
-
-_SKIP = ("whisper", "guard", "embed", "vision", "tool", "tts", "image",
-         "compound", "orpheus", "safeguard", "allam")
+_SKIP = ("whisper", "tts", "embed", "audio")
 
 _mi = 0
 
@@ -88,7 +86,7 @@ _ANSI_BG = {
 
 def _compress_for_history(txt):
     if not txt or not txt.strip():
-        return "[ok]"
+        return ""
     lines = txt.strip().splitlines()
     if len(lines) <= 5:
         return txt.strip()
@@ -145,11 +143,14 @@ def tags_to_ansi(txt):
                         return f"\033[48;2;{r};{g};{b}m"
                     except ValueError:
                         pass
-        return m.group(0)
+        return ""
 
-    res = re.sub(r'<{1,2}(color|bgcolor):([^<>]+)>{1,2}', _sub_color, txt, flags=re.IGNORECASE)
-    res = re.sub(r'<{1,2}clear:zae_term>{1,2}', '\033[2J\033[H', res, flags=re.IGNORECASE)
-    return res
+    txt = re.sub(r'<{1,2}(color|bgcolor):([^<>]+)>{1,2}', _sub_color, txt, flags=re.IGNORECASE)
+    txt = re.sub(r'<{1,2}clear:zae_term>{1,2}', '\033[2J\033[H', txt, flags=re.IGNORECASE)
+    txt = re.sub(r'\b(color|bgcolor):(#[0-9a-fA-F]{3,8}|reset)\b', _sub_color, txt, flags=re.IGNORECASE)
+    txt = re.sub(r'\bclear:zae_term\b', '\033[2J\033[H', txt, flags=re.IGNORECASE)
+    txt = re.sub(r'<{0,2}(?:color|bgcolor):[^\s<>]+>{0,2}', '', txt, flags=re.IGNORECASE)
+    return txt
 
 def _lk():
     e = os.environ.get("GROQ_API_KEY", "").strip()
@@ -165,13 +166,17 @@ def _gm(k):
     try:
         r = urllib.request.Request("https://api.groq.com/openai/v1/models",
             headers={"Authorization": f"Bearer {k}", "User-Agent": _UA})
-        with urllib.request.urlopen(r, timeout=4) as resp:
+        with urllib.request.urlopen(r, timeout=5) as resp:
             d = json.loads(resp.read().decode())
             live = [m["id"] for m in d.get("data", [])
-                    if not any(x in m["id"] for x in _SKIP)]
+                    if not any(x in m["id"].lower() for x in _SKIP)]
             if live:
-                p = [m for m in _FM if m in live] + [m for m in live if m not in _FM]
-                return p
+                pref = "llama-3.1-8b-instant"
+                sorted_live = sorted(live)
+                if pref in sorted_live:
+                    sorted_live.remove(pref)
+                    sorted_live.insert(0, pref)
+                return sorted_live
     except Exception:
         pass
     return list(_FM)
@@ -220,9 +225,11 @@ _STRIP_PATTERNS = [
 ]
 
 def _clean(txt):
+    txt = re.sub(r'<think>.*?</think>', '', txt, flags=re.DOTALL)
     for p in _STRIP_PATTERNS:
         txt = p.sub("", txt)
     txt = txt.replace("```bash", "").replace("```text", "").replace("```", "")
+    txt = re.sub(r'^\s*\[?(?:ok|OK)\]?\s*$', '', txt)
     txt = txt.strip("\n")
     return txt
 
@@ -499,10 +506,10 @@ class _St:
 
     def hdr(self):
         cf = []
-        for k, v in list(self.fs.items())[-15:]:
-            preview = f'="{v[:50]}"' if v else ""
+        for k, v in list(self.fs.items())[-12:]:
+            preview = f'="{v[:40]}"' if v else ""
             cf.append(f"{k}{preview}")
-        df = list(self.dirs)[-10:]
+        df = list(self.dirs)[-8:]
         info = [f"OS={self.os}", f"CWD={self.cd}"]
         if cf: info.append(f"VFS_FILES: {', '.join(cf)}")
         if df: info.append(f"VFS_DIRS: {', '.join(df)}")
@@ -512,14 +519,20 @@ class _St:
 _SYS = r"""Raw TTY/console emulator. Output ONLY exact command stdout/stderr bytes. No markdown, no commentary, no prompt (app draws prompt).
 
 RULES:
-1. Valid commands must print realistic output. Silent commands (cd, mkdir, touch, rm, del) = empty output.
+1. Valid commands print realistic output. Silent commands (cd, mkdir, touch, rm, del, or any command redirected with > or >>) produce ZERO output (empty string). NEVER output '[ok]', 'Done', or confirmation text.
 2. Short inputs (y/n, 1, 2) continue previous interactive prompts. For input prompts, end with <request>.
 3. Stop immediately when realistic output ends. Never loop/repeat lines. Max 25 output lines.
-4. Colors: <color:#HEX>, <color:reset>, <bgcolor:#HEX>, <bgcolor:reset>, or ANSI \033[...m. CMD `color 0a`: silent, emit <bgcolor:#000000><color:#55ff55>.
+4. Colors: emit <color:#HEX>, <color:reset>, <bgcolor:#HEX>, <bgcolor:reset>, or ANSI \033[...m. CMD `color 0a`: silent, emit <bgcolor:#000000><color:#55ff55>.
 
-CRITICAL CWD TRACKING: You must accurately track the Current Working Directory across commands. Whenever the directory changes via 'cd', the resulting shell prompt MUST reflect the new absolute path (e.g. 'cd ..' from C:\Users\root must change prompt to 'C:\Users>'). Relative paths and listings MUST match active CWD.
+WINDOWS CMD EMULATION:
+When PLATFORM is windows and SHELL is cmd:
+Never translate Unix commands to Windows commands! If the user enters a command that does not exist in Windows CMD (such as 'ls', 'cat', 'rm', 'pwd', 'clear', 'touch', 'grep', 'cp', 'mv'), output the exact standard Windows error message:
+'{command}' is not recognized as an internal or external command, operable program or batch file.
+Do NOT run 'dir' when user typed 'ls'. Strictly emulate cmd.exe behavior.
 
-PERSISTENCE: Maintain a persistent virtual filesystem state in memory for the active session. If a file or directory is created with echo, touch, mkdir, or redirected output, it MUST continue to exist in subsequent 'dir', 'ls', and 'type' calls until explicitly deleted. Never reset filesystem state to default during the session. Reflect all files/dirs from [VFS_FILES: ...] and [VFS_DIRS: ...].
+CRITICAL CWD TRACKING: Track Current Working Directory. When directory changes via 'cd', relative paths and listings MUST strictly match active CWD.
+
+PERSISTENCE: Maintain persistent virtual filesystem state in memory for active session. Files created with echo, touch, mkdir, or redirected output MUST exist in subsequent 'dir', 'ls', and 'type' calls until deleted. Reflect all items from [VFS_FILES: ...] and [VFS_DIRS: ...].
 
 FASTFETCH (2 parallel columns side-by-side, art on left, info on right):
 Windows 10/11:
@@ -562,7 +575,7 @@ _BOOT = r"""<clear:zae_term>
 <color:#651fff>███████╗<color:#1de9b6>██║  ██║<color:#2979ff>███████╗
 <color:#3d5afe>╚══════╝<color:#00bfa5>╚═╝  ╚═╝<color:#304ffe>╚══════╝<color:reset>
 
-<color:#ff007f>:3<color:reset> <color:#6272a4>a virtual machine that can run any OS. v3.2. Powered by Groq. github: @rootlesszen<color:reset>
+<color:#ff007f>:3<color:reset> <color:#6272a4>a virtual machine that can run any OS. v3. Powered by Groq. github: @rootlesszen<color:reset>
 <timeout:0.18>
 Press F11 for Fullscreen, Esc to exit.
 """
@@ -596,21 +609,19 @@ class _W_Thread(QThread):
         rate_hit_count = 0
         for attempt, mdl in enumerate(order):
             if self._stop: return
-            is_reason = any(r in mdl for r in _REASON_MODELS)
-            maxt = 500 if is_reason else 600
             pl = {
                 "model": mdl,
                 "messages": self._msgs,
                 "temperature": 0.1,
-                "max_completion_tokens": maxt,
+                "max_completion_tokens": 600,
                 "stream": True,
-                "top_p": 0.85,
-                "presence_penalty": 0.3,
-                "frequency_penalty": 0.5,
             }
-            if is_reason:
+            if "gpt-oss" in mdl:
                 pl["reasoning_effort"] = "low"
                 pl["include_reasoning"] = False
+            elif "qwen3" in mdl:
+                pl["reasoning_effort"] = "none"
+
             try:
                 self.stat.emit("api request")
                 self.mused.emit(mdl)
@@ -626,6 +637,7 @@ class _W_Thread(QThread):
                 _looped = False
                 _line_buf = ""
                 _line_count = 0
+                _in_think = False
                 self.stat.emit("waiting")
                 with urllib.request.urlopen(rq, timeout=15) as rsp:
                     for rl in rsp:
@@ -637,39 +649,63 @@ class _W_Thread(QThread):
                         try:
                             c = json.loads(ds)
                             delta = c.get("choices", [{}])[0].get("delta", {})
-                            dt = delta.get("content", "") or delta.get("reasoning_content", "") or delta.get("reasoning", "") or ""
-                            if dt:
-                                combined = _line_buf + dt
-                                if "<request>" in combined or "<<request>>" in combined:
-                                    tag = "<<request>>" if "<<request>>" in combined else "<request>"
-                                    pre = combined.split(tag)[0]
-                                    if pre:
-                                        remaining = pre[len(_line_buf):]
-                                        if remaining:
-                                            ft.append(remaining)
-                                            self.chunk.emit(remaining)
-                                    ft.append("<request>")
-                                    _line_buf = ""
-                                    break
+                            dt = delta.get("content") or delta.get("reasoning_content") or delta.get("reasoning") or ""
+                            if not dt:
+                                continue
+
+                            if "<think>" in dt:
+                                parts = dt.split("<think>", 1)
+                                if "</think>" in parts[1]:
+                                    dt = parts[0] + parts[1].split("</think>", 1)[1]
+                                else:
+                                    _in_think = True
+                                    dt = parts[0]
+                            elif _in_think:
+                                if "</think>" in dt:
+                                    _in_think = False
+                                    dt = dt.split("</think>", 1)[1]
+                                else:
+                                    continue
+
+                            if not dt:
+                                continue
+
+                            combined = _line_buf + dt
+                            if "<request>" in combined or "<<request>>" in combined:
+                                tag = "<<request>>" if "<<request>>" in combined else "<request>"
+                                pre = combined.split(tag)[0]
+                                if pre:
+                                    rem = pre[len(_line_buf):]
+                                    if rem and not self._silent:
+                                        ft.append(rem)
+                                        self.chunk.emit(rem)
+                                ft.append("<request>")
+                                _line_buf = ""
+                                break
+
+                            if not self._silent:
                                 ft.append(dt)
                                 self.chunk.emit(dt)
-                                _line_buf += dt
-                                newlines = _line_buf.count("\n")
-                                if newlines > 0:
-                                    _line_count += newlines
-                                    last_nl = _line_buf.rfind("\n")
-                                    _line_buf = _line_buf[last_nl+1:]
-                                w = dt.strip()
-                                if w and w == _rep_word:
-                                    _rep_count += 1
-                                    if _rep_count >= 6:
-                                        _looped = True
-                                        break
-                                elif w:
-                                    _rep_word = w; _rep_count = 1
-                                if len(ft) > 3000 or _line_count > 40:
+                            else:
+                                ft.append(dt)
+
+                            _line_buf += dt
+                            newlines = _line_buf.count("\n")
+                            if newlines > 0:
+                                _line_count += newlines
+                                last_nl = _line_buf.rfind("\n")
+                                _line_buf = _line_buf[last_nl+1:]
+                            w = dt.strip()
+                            if w and w == _rep_word:
+                                _rep_count += 1
+                                if _rep_count >= 6:
                                     _looped = True
                                     break
+                            elif w:
+                                _rep_word = w; _rep_count = 1
+                            if len(ft) > 3000 or _line_count > 40:
+                                _looped = True
+                                break
                         except Exception:
                             continue
                 ans = "".join(ft)
@@ -679,9 +715,6 @@ class _W_Thread(QThread):
                 if not ans.strip() and not self._silent:
                     time.sleep(0.2)
                     continue
-                if ans.strip():
-                    _mi = ml.index(mdl) + 1 if mdl in ml else 0
-                    if _mi >= len(ml): _mi = 0
                 self.done.emit(ans.rstrip())
                 return
             except urllib.error.HTTPError as e:
@@ -712,6 +745,7 @@ class _W_Thread(QThread):
                         self.chunk.emit(f"<color:#808080>rate limit for ~{sw}s.<color:reset>\n")
                         self.done.emit(""); return
                     self.stat.emit("rate limited, switching...")
+                    _mi = (_mi + 1) % len(ml)
                     time.sleep(0.3)
                     continue
                 time.sleep(0.3)
@@ -726,7 +760,7 @@ class _W_Thread(QThread):
                 sw = secs.group(1) if secs else wt
                 self.chunk.emit(f"<color:#808080>rate limit for ~{sw}s.<color:reset>\n")
             elif lec == 400:
-                self.chunk.emit("<color:#ff5555>groq: context full. type 'clear'<color:reset>\n")
+                self.chunk.emit("<color:#ff5555>groq: request error 400<color:reset>\n")
             elif lec:
                 self.chunk.emit(f"<color:#ff5555>groq: error {lec}<color:reset>\n")
             self.done.emit("")
@@ -746,6 +780,7 @@ class _Term(QPlainTextEdit):
         self._models = _gm(self._k)
         self.setFont(_gf(12))
         self.setCursorWidth(9)
+        self._default_fg = _TC
         self._cc = _TC
         self._bg_cc = "#000000"
         self._update_style()
@@ -892,7 +927,7 @@ class _Term(QPlainTextEdit):
                 while i < len(codes):
                     c = codes[i]
                     if c == 0:
-                        self._cc = _TC
+                        self._cc = self._default_fg
                     elif c in _ANSI_FG:
                         self._cc = _ANSI_FG[c]
                     elif c in _ANSI_BG:
@@ -926,12 +961,13 @@ class _Term(QPlainTextEdit):
     def _ic(self, txt, clr=None):
         if not txt:
             return
-        if "<" in txt or "\033" in txt or "\x1b" in txt or "\\e[" in txt:
+        if "<" in txt or "\033" in txt or "\x1b" in txt or "\\e[" in txt or "color:" in txt or "bgcolor:" in txt:
             self._parse_and_insert(txt, clr)
         else:
             self._raw_insert(txt, clr or self._cc)
 
     def _np(self):
+        self._cc = self._default_fg
         c = self.textCursor(); c.movePosition(QTextCursor.MoveOperation.End)
         fmt = QTextCharFormat(); fmt.setForeground(QColor("#ffffff"))
         c.insertText(self._pr, fmt)
@@ -945,6 +981,7 @@ class _Term(QPlainTextEdit):
         if hasattr(self, '_wk') and self._wk.isRunning():
             self._wk.cancel(); self._wk.terminate(); self._wk.wait(100)
         self._sb = ""
+        self._cc = self._default_fg
         self._busy = False; self._waiting_input = False
         self.setReadOnly(False)
         self._raw_insert("^C\n", self._cc); self._np()
@@ -966,7 +1003,7 @@ class _Term(QPlainTextEdit):
         self._raw_insert(f"╔{bar}╗\n", "#4444aa")
         self._raw_insert(f"║{'ZAE MODEL SELECTOR':^52}║\n", "#4444aa")
         self._raw_insert(f"╠{bar}╣\n", "#4444aa")
-        max_v = 14
+        max_v = 15
         total = len(self._models)
         if total <= max_v:
             start_i = 0
@@ -1012,10 +1049,9 @@ class _Term(QPlainTextEdit):
                 c.movePosition(QTextCursor.MoveOperation.End, QTextCursor.MoveMode.KeepAnchor)
                 c.removeSelectedText()
                 self.setTextCursor(c)
-                old_idx = _FM.index(chosen) if chosen in _FM else 0
-                global _mi
-                _mi = old_idx
                 self._models = [chosen] + [m for m in self._models if m != chosen]
+                global _mi
+                _mi = 0
                 self._ic(f"model set: {chosen}\n", "#77dd77")
                 self._np()
                 return
@@ -1114,6 +1150,8 @@ class _Term(QPlainTextEdit):
         if not cmd:
             self._np(); return
 
+        self._cc = self._default_fg
+
         if cmd == ">zae show":
             self._ic(f"zae: model: {self._lm}\nresponse:\n{self._lr}\n", "#ffff55")
             self._np(); return
@@ -1121,6 +1159,7 @@ class _Term(QPlainTextEdit):
         if cmd == ">zae reset":
             self._st = _St()
             self._msgs = []
+            self._default_fg = _TC
             self._cc = _TC
             self._bg_cc = "#000000"
             self._waiting_input = False
@@ -1137,6 +1176,7 @@ class _Term(QPlainTextEdit):
             os_name = rest.strip('"').strip("'").strip()
             self._st = _St()
             self._msgs = []
+            self._default_fg = _TC
             self._cc = _TC
             self._bg_cc = "#000000"
             self._waiting_input = False
@@ -1170,6 +1210,7 @@ class _Term(QPlainTextEdit):
             return
 
         if cmd == ">zae model":
+            self._models = _gm(self._k)
             self._model_menu_active = True
             self._model_menu_idx = 0
             c = self.textCursor()
@@ -1186,17 +1227,21 @@ class _Term(QPlainTextEdit):
                 bg_d = cm.group(1)
                 fg_d = cm.group(2)
                 self._bg_cc = _CMD_COLORS.get(bg_d, "#000000")
-                self._cc = _CMD_COLORS.get(fg_d, "#55ff55")
+                self._default_fg = _CMD_COLORS.get(fg_d, "#55ff55")
+                self._cc = self._default_fg
                 self._update_style()
                 self._np()
                 return
+            if _lc == "cls":
+                self.clear(); self._np(); return
+        else:
+            if _lc == "clear":
+                self.clear(); self._np(); return
 
         self._st.upd(cmd)
         self._pr = self._st.prompt()
 
-        if _lc == "clear" or (self._st.plat == "windows" and _lc == "cls"):
-            self.clear(); self._np(); return
-        elif _lc in ("exit", "poweroff", "shutdown now"):
+        if _lc in ("exit", "poweroff", "shutdown now"):
             self.close(); return
 
         if not self._k:
@@ -1217,7 +1262,7 @@ class _Term(QPlainTextEdit):
         _sc = cmd.split()[0] if cmd.split() else ""
         _silent = _sc.lower() in ("cd", "mkdir", "touch", "export", "alias", "unset", "source",
                                    "chmod", "chown", "mv", "cp", "rm",
-                                   "md", "set", "cd.", "attrib", "cd..", "color")
+                                   "md", "set", "cd.", "attrib", "cd..", "color", "copy", "ren", "del", "erase") or bool(re.search(r'(?:>>|>)\s*\S+', cmd))
         self._spin_status = ""
         self._wk = _W_Thread(self._k, pm, self._models, silent=_silent)
         self._wk.chunk.connect(self._otc)
@@ -1243,6 +1288,9 @@ class _Term(QPlainTextEdit):
         if not ch: return
         self._sb += ch
 
+        if self._sb.strip().lower() in ("[ok]", "ok", "[ ok ]"):
+            return
+
         to_process = self._sb
         self._sb = ""
 
@@ -1259,22 +1307,35 @@ class _Term(QPlainTextEdit):
             to_process = to_process[:m_esc.start()]
 
         if to_process:
+            if to_process.strip().lower() in ("[ok]", "ok", "[ ok ]"):
+                return
             self._parse_and_insert(to_process)
 
     def _odf(self, raw):
         self._xs()
         self._lr = raw
         if self._sb:
-            self._parse_and_insert(self._sb)
+            if self._sb.strip().lower() not in ("[ok]", "ok", "[ ok ]"):
+                self._parse_and_insert(self._sb)
             self._sb = ""
+
+        self._cc = self._default_fg
 
         has_request = ("<request>" in raw) or ("<<request>>" in raw)
         clean_raw = re.sub(r'<{1,2}request>{1,2}', '', raw).rstrip()
+
+        if clean_raw.strip().lower() in ("[ok]", "ok", "[ ok ]"):
+            clean_raw = ""
+
         if clean_raw and not clean_raw.endswith("\n"):
             self._raw_insert("\n", self._cc)
 
-        hist_entry = _compress_for_history(clean_raw)
-        self._msgs.append({"role": "assistant", "content": hist_entry})
+        if clean_raw.strip():
+            hist_entry = _compress_for_history(clean_raw)
+            self._msgs.append({"role": "assistant", "content": hist_entry})
+        else:
+            self._msgs.append({"role": "assistant", "content": ""})
+
         if len(self._msgs) > 20:
             self._msgs = self._msgs[-16:]
 
